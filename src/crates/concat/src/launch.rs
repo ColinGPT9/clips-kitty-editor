@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: concat [--project <PROJECT_DIRECTORY> | --software | --mcp [auto|window|headless] | --schema | --version | --smoke | --smoke-export <CLIP> | --whisper-cpu]";
+const USAGE: &str = "usage: concat [--project <PROJECT_DIRECTORY> | --embed <HWND> [--bounds <X,Y,W,H>] [--api <ADDRESS>] [--project <PROJECT_DIRECTORY>] | --software | --mcp [auto|window|headless] | --schema | --version | --smoke | --smoke-export <CLIP> | --whisper-cpu]";
 
 /// What one run of the binary was asked to do.
 #[derive(Debug, PartialEq, Eq)]
@@ -42,6 +42,15 @@ pub enum Launch {
     /// file is written: 0, or 1 with the reason in the log. For CI, where a
     /// launch alone never reaches an export.
     SmokeExport(PathBuf),
+    /// The window as a child of another program's window (Windows only):
+    /// the editor inside Clips Kitty. On the project it names, if any. See
+    /// `concat::embed`.
+    Embedded {
+        /// The project to open, as `--project` names it.
+        project: Option<PathBuf>,
+        /// The host's window, where the editor starts, and the API's address.
+        embed: concat::embed::Embed,
+    },
     /// Load whisper's CPU kernels the way the first transcription does,
     /// print the CPU they run on and exit, before logging, the GPU or a
     /// window. For CI on an emulated older CPU: where the kernels are one
@@ -83,6 +92,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, String>
             .filter(|clip| !clip.is_empty())
             .ok_or_else(|| "--smoke-export requires a video file".to_string())?;
         Launch::SmokeExport(PathBuf::from(clip))
+    } else if option == "--embed" {
+        return parse_embedded(args);
     } else if option == "--project" {
         let path = args
             .next()
@@ -96,6 +107,49 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, String>
         return Err(USAGE.into());
     }
     Ok(launch)
+}
+
+/// What follows `--embed`: the window, then `--bounds`, `--api` and
+/// `--project` in any order, each at most once.
+fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, String> {
+    let parent = args
+        .next()
+        .and_then(|word| word.to_str().and_then(concat::embed::parse_window))
+        .ok_or_else(|| {
+            format!("--embed takes a window handle, decimal or 0x hexadecimal\n{USAGE}")
+        })?;
+    let mut embed = concat::embed::Embed {
+        parent,
+        bounds: None,
+        api: None,
+    };
+    let mut project = None;
+    while let Some(option) = args.next() {
+        let value = args
+            .next()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("{} requires a value\n{USAGE}", option.to_string_lossy()))?;
+        if option == "--bounds" && embed.bounds.is_none() {
+            embed.bounds = Some(
+                value
+                    .to_str()
+                    .and_then(concat::embed::Bounds::parse)
+                    .ok_or_else(|| "--bounds takes x,y,width,height in pixels".to_string())?,
+            );
+        } else if option == "--api" && embed.api.is_none() {
+            embed.api = Some(
+                value
+                    .to_str()
+                    .and_then(|text| text.parse::<std::net::SocketAddr>().ok())
+                    .ok_or_else(|| "--api takes an address such as 127.0.0.1:7420".to_string())?,
+            );
+        } else if option == "--project" && project.is_none() && value != "--project" {
+            project = Some(PathBuf::from(value));
+        } else {
+            return Err(USAGE.into());
+        }
+    }
+    Ok(Launch::Embedded { project, embed })
 }
 
 #[cfg(test)]
@@ -178,6 +232,61 @@ mod tests {
             vec!["--project", "one", "--project", "two"],
             vec!["--unknown"],
             vec!["one"],
+        ] {
+            assert!(parse_strs(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn embed_takes_a_window_and_optional_bounds_api_and_project() {
+        use concat::embed::{Bounds, Embed};
+        assert_eq!(
+            parse_strs(&["--embed", "0x1f2e"]).unwrap(),
+            Launch::Embedded {
+                project: None,
+                embed: Embed {
+                    parent: 0x1f2e,
+                    bounds: None,
+                    api: None
+                }
+            }
+        );
+        assert_eq!(
+            parse_strs(&[
+                "--embed",
+                "4242",
+                "--project",
+                "clips/one",
+                "--bounds",
+                "220,0,1164,861",
+                "--api",
+                "127.0.0.1:7420"
+            ])
+            .unwrap(),
+            Launch::Embedded {
+                project: Some(PathBuf::from("clips/one")),
+                embed: Embed {
+                    parent: 4242,
+                    bounds: Some(Bounds {
+                        x: 220,
+                        y: 0,
+                        width: 1164,
+                        height: 861
+                    }),
+                    api: Some("127.0.0.1:7420".parse().unwrap())
+                }
+            }
+        );
+        for args in [
+            vec!["--embed"],
+            vec!["--embed", "0"],
+            vec!["--embed", "window"],
+            vec!["--embed", "12", "--bounds"],
+            vec!["--embed", "12", "--bounds", "1,2,3"],
+            vec!["--embed", "12", "--api", "nowhere"],
+            vec!["--embed", "12", "--project", "a", "--project", "b"],
+            vec!["--embed", "12", "--smoke"],
+            vec!["--project", "a", "--embed", "12"],
         ] {
             assert!(parse_strs(&args).is_err(), "{args:?}");
         }

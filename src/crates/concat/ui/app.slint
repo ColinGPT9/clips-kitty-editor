@@ -203,7 +203,7 @@ export component App inherits Window {
     // https://github.com/jub0t/Concat/issues/145
     // Not for the phone shell on a desk, which draws no buttons of its own
     // and keeps the platform's bar above the phone's screen; see platform.rs.
-    no-frame: root.own-window-buttons && !root.phone;
+    no-frame: root.embedded || (root.own-window-buttons && !root.phone);
     background: Theme.page;
     default-font-family: Theme.font;
     default-font-size: Theme.fs;
@@ -218,8 +218,10 @@ export component App inherits Window {
     // Below this the three columns cannot all hold their minimum and the panes
     // start eating each other. The phone shell has no columns, and a phone
     // is narrower than this on every side.
-    min-width: root.phone ? 320px : 900px;
-    min-height: root.phone ? 480px : 560px;
+    // Embedded in a host's window (`--embed`) the host sets the size, and
+    // the editor's own layout copes below these (its compact layout).
+    min-width: root.embedded ? 0px : (root.phone ? 320px : 900px);
+    min-height: root.embedded ? 0px : (root.phone ? 480px : 560px);
     // So the shortcuts work before anything has been clicked. Without it the
     // window opens with nothing focused, and a key would have nowhere to be
     // delivered from until the first press landed somewhere.
@@ -349,6 +351,9 @@ export component App inherits Window {
     /// Draw minimise / maximise / close on the strip. False on macOS, where
     /// the traffic lights are the window's own.
     in property <bool> own-window-buttons;
+    /// Inside another program's window (`--embed`, Windows): no frame, no
+    /// window buttons, no minimum size; see embed.rs.
+    in property <bool> embedded;
     /// Read back from the platform on every resize, so the strip can show
     /// restore rather than maximise - whichever route maximised it.
     in-out property <bool> window-maximized;
@@ -757,7 +762,7 @@ export component App inherits Window {
                     root.menu-opened(index);
                 }
 
-                own-buttons: root.own-window-buttons;
+                own-buttons: root.own-window-buttons && !root.embedded;
                 covered: root.sheets-top > 0 && root.sheet-up;
                 // A close goes the way every close does: the project is
                 // saved and a running export is cancelled. One click on the

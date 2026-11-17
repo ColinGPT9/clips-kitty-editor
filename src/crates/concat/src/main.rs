@@ -75,6 +75,12 @@ fn main() -> Result<(), slint::PlatformError> {
         Launch::Normal(project) => {
             concat::run_with_project(project).inspect_err(concat::report_startup_failure)
         }
+        Launch::Embedded { project, embed } => {
+            concat::embed::set(embed)
+                .map_err(slint::PlatformError::Other)
+                .inspect_err(concat::report_startup_failure)?;
+            concat::run_with_project(project).inspect_err(concat::report_startup_failure)
+        }
         Launch::Software => {
             concat::draw_in_software();
             concat::run_with_project(None).inspect_err(concat::report_startup_failure)

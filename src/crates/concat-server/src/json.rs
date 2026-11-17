@@ -127,6 +127,8 @@ pub(crate) struct Door {
     pub(crate) pending: Arc<AtomicUsize>,
     pub(crate) throttle: Arc<Throttle>,
     pub(crate) next_id: Arc<AtomicU64>,
+    /// The program's own `host.*` methods, when it has any.
+    pub(crate) host: Option<crate::HostMethod>,
 }
 
 /// One of a counted number of places, given back when dropped.
@@ -332,9 +334,12 @@ fn connection<S: Socket>(mut stream: S, door: Door, id: u64, peer: Peer, pending
         if line.trim().is_empty() {
             continue;
         }
-        let (id, response) = match Call::parse(&line) {
-            Ok(call) => (call.id, door.hub.call(call.request)),
-            Err((id, error)) => (id, Response::Error(error)),
+        let (id, response) = match host_call(&line, door.host.as_ref()) {
+            Some(answered) => answered,
+            None => match Call::parse(&line) {
+                Ok(call) => (call.id, door.hub.call(call.request)),
+                Err((id, error)) => (id, Response::Error(error)),
+            },
         };
         if !outbox.send(Message::Reply { id, response }) {
             break;
@@ -344,6 +349,34 @@ fn connection<S: Socket>(mut stream: S, door: Door, id: u64, peer: Peer, pending
     outbox.close();
     // The caller sees EOF even where its own end is still open.
     reader.into_inner().into_inner().1.hang_up();
+}
+
+/// A `host.*` call, answered by the program's own methods without going
+/// through the hub; `None` for any other line, which the API answers - and
+/// for a `host.*` call when there are no such methods, which the API then
+/// refuses as unknown.
+fn host_call(line: &str, host: Option<&crate::HostMethod>) -> Option<(Option<Id>, Response)> {
+    let host = host?;
+    let Ok(Value::Object(mut object)) = serde_json::from_str::<Value>(line) else {
+        return None;
+    };
+    let method = object.get("method").and_then(Value::as_str)?.to_owned();
+    if !method.starts_with("host.") {
+        return None;
+    }
+    let id = match object.remove("id") {
+        Some(id @ (Value::String(_) | Value::Number(_) | Value::Null)) => Some(id),
+        _ => None,
+    };
+    let params = match object.remove("params") {
+        None | Some(Value::Null) => Value::Object(serde_json::Map::new()),
+        Some(params) => params,
+    };
+    let response = match host(&method, &params) {
+        Ok(value) => Response::Result(Reply::Document(value)),
+        Err(why) => Response::Error(ApiError::invalid(why)),
+    };
+    Some((id, response))
 }
 
 /// The first line that is not blank, read before `deadline` - a deadline

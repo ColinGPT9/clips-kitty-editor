@@ -772,6 +772,11 @@ impl SettingsPane {
     /// takes effect; a bind that fails turns the switch back off and says
     /// why on the page.
     fn apply_server(&mut self, studio: &mut Studio) {
+        // Embedded, the host's server is started once and kept: the
+        // Automation page's switch and fields do not move it. See below.
+        if crate::embed::active() && studio.host.server.is_some() {
+            return;
+        }
         // Detached: the address is free again when this returns, and a
         // call or an export the old server was in the middle of is
         // cancelled and finished off the event loop, not waited for on it.
@@ -782,6 +787,42 @@ impl SettingsPane {
         let exporter = studio.host.exporter.clone();
         let open_projects = studio.host.open_projects.clone();
         let dirs = studio.host.dirs.clone();
+        // Embedded in a host's window (`--embed`), the server is how the
+        // host steers the editor, so it runs whatever the switch says, on
+        // the address and with the token the host gave, with the host's
+        // own methods beside the API's. See embed.rs.
+        if crate::embed::active() {
+            let config = concat_server::Config {
+                json: Some(crate::embed::api_address()),
+                token: crate::embed::token(),
+                discovery: Some(concat_server::discovery::path_in(&dirs.config)),
+                host: Some(crate::embed::host_methods()),
+                ..concat_server::Config::default()
+            };
+            match concat_server::Server::start(config, move |events| {
+                let mut api = concat_api::Api::new(events)?;
+                api.share_exporter(exporter);
+                api.share_open_projects(open_projects);
+                Ok(api)
+            }) {
+                Ok(server) => {
+                    log::info!(
+                        "embed: the host's API listens on {}",
+                        server
+                            .json_addr()
+                            .map(|address| address.to_string())
+                            .unwrap_or_default()
+                    );
+                    crate::embed::announce(server.json_addr(), server.token());
+                    studio.host.server = Some(server);
+                }
+                Err(error) => {
+                    log::error!("embed: the host's API could not start: {error}");
+                    self.server_error = error;
+                }
+            }
+            return;
+        }
         let prefs = &studio.prefs.server;
         if !prefs.enabled {
             return;

@@ -34,6 +34,7 @@ mod ui {
 mod batch_volume;
 mod chips;
 mod dock;
+pub mod embed;
 mod fonts;
 mod format;
 mod gpu;
@@ -799,6 +800,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
         }
     });
     app.set_own_window_buttons(platform::OWN_WINDOW_BUTTONS);
+    // Inside a host's window (`--embed`): no window buttons, no minimum
+    // size of its own; the host decides where and how big. See embed.rs.
+    app.set_embedded(embed::active());
 
     // Mutate, then republish. Every handler is one of these three: the whole
     // window, the lanes alone (for the handlers a pointer drives directly,

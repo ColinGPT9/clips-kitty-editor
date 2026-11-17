@@ -124,6 +124,39 @@ pub struct Config {
     /// started by an agent. See [`discovery`]; removed when the server
     /// stops. `None` lists nothing.
     pub discovery: Option<PathBuf>,
+    /// Methods named `host.*`, answered by the program the server runs in
+    /// rather than by the API: what an editor embedded in another
+    /// program's window is steered with (its place, whether it shows).
+    /// JSON-RPC lines only, behind the same token. `None` refuses them as
+    /// unknown methods, as before.
+    pub host: Option<HostMethods>,
+}
+
+/// A host method's answer to `(method, params)`: its result, or the
+/// sentence a caller is refused with.
+pub type HostMethod =
+    Arc<dyn Fn(&str, &serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync>;
+
+/// The `host.*` methods of a [`Config`]; see [`Config::host`].
+#[derive(Clone)]
+pub struct HostMethods(pub HostMethod);
+
+impl HostMethods {
+    /// Methods answered by `answer`.
+    pub fn new(
+        answer: impl Fn(&str, &serde_json::Value) -> Result<serde_json::Value, String>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        HostMethods(Arc::new(answer))
+    }
+}
+
+impl std::fmt::Debug for HostMethods {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("HostMethods")
+    }
 }
 
 /// Where the API writes when told nothing else: the user's home folder,
@@ -231,6 +264,7 @@ impl Server {
             pending: Arc::new(AtomicUsize::new(0)),
             throttle: Arc::clone(&throttle),
             next_id: Arc::new(AtomicU64::new(1)),
+            host: config.host.clone().map(|methods| methods.0),
         };
         // Built before the first bind, so a bind that fails drops a server
         // that shuts down what it had already started.

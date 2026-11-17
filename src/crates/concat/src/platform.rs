@@ -278,7 +278,13 @@ impl CustomApplicationHandler for DropHandler {
             && let Some(window) = winit_window
         {
             self.fitted = true;
-            fit_to_screen(window);
+            // Embedded, the host places the window; there is no screen to
+            // fit and nothing to maximise.
+            if crate::embed::active() {
+                crate::embed::attach(window);
+            } else {
+                fit_to_screen(window);
+            }
         }
         if !self.wayland_tried
             && let Some(window) = winit_window
@@ -288,6 +294,9 @@ impl CustomApplicationHandler for DropHandler {
         }
         match event {
             WindowEvent::ScaleFactorChanged { .. } => reapply_ui_scale(std::time::Duration::ZERO),
+            WindowEvent::Resized(size) if crate::embed::active() => {
+                crate::embed::resized(size.width, size.height);
+            }
             WindowEvent::DroppedFile(path) => self.pending.push(path.clone()),
             // Back at the front, after Explorer or the file manager: what a
             // dropped file is to an import, a return is to a look for one
@@ -340,6 +349,9 @@ impl CustomApplicationHandler for DropHandler {
                 state: ElementState::Pressed,
                 ..
             } => {
+                if crate::embed::active() {
+                    crate::embed::pressed();
+                }
                 if let (Some(window), Some((x, y))) = (slint_window, self.cursor)
                     && press_misses_focused_input(window, x, y)
                 {
@@ -541,7 +553,10 @@ pub fn select_backend(
         });
     }
     #[cfg(target_os = "windows")]
-    if desk {
+    if desk && crate::embed::active() {
+        // Inside a host's window: a borderless child of it. See embed.rs.
+        selector = selector.with_winit_window_attributes_hook(crate::embed::window_attributes);
+    } else if desk {
         use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
         selector = selector.with_winit_window_attributes_hook(|attributes| {
             attributes
@@ -577,7 +592,13 @@ pub fn report_startup_failure(error: &str) {
         if let Some(path) = concat_host::logs::current() {
             description.push_str(&format!("\n\nLog: {}", path.display()));
         }
-        rfd::MessageDialog::new()
+        #[allow(unused_mut)]
+        let mut dialog = rfd::MessageDialog::new();
+        #[cfg(windows)]
+        if let Some(owner) = crate::embed::dialog_owner() {
+            dialog = dialog.set_parent(&owner);
+        }
+        dialog
             .set_level(rfd::MessageLevel::Error)
             .set_title("Concat")
             .set_description(description)
@@ -619,6 +640,10 @@ pub fn delete_key(shift: bool) -> String {
 
 /// Minimises the window: the strip's first button.
 pub fn minimize(window: &slint::Window) {
+    // Embedded, the window is a child of the host's: the host minimises.
+    if crate::embed::active() {
+        return;
+    }
     #[cfg(not(target_os = "android"))]
     {
         use slint::winit_030::WinitWindowAccessor;
@@ -703,6 +728,10 @@ pub fn select_backend(
 
 /// Starts a window drag from the title strip.
 pub fn begin_drag(window: &slint::Window) {
+    // Embedded, a drag would move the editor about inside the host's window.
+    if crate::embed::active() {
+        return;
+    }
     #[cfg(not(target_os = "android"))]
     {
         use slint::winit_030::WinitWindowAccessor;
@@ -716,6 +745,9 @@ pub fn begin_drag(window: &slint::Window) {
 
 /// Maximises the window, or restores it: the title strip's double-click.
 pub fn toggle_maximize(window: &slint::Window) {
+    if crate::embed::active() {
+        return;
+    }
     #[cfg(not(target_os = "android"))]
     {
         use slint::winit_030::WinitWindowAccessor;
@@ -731,7 +763,7 @@ pub fn toggle_maximize(window: &slint::Window) {
 pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let mut dialog = rfd::FileDialog::new().set_title(title);
+        let mut dialog = owned(rfd::FileDialog::new()).set_title(title);
         if let Some(folder) = existing_folder(start) {
             dialog = dialog.set_directory(folder);
         }
@@ -742,6 +774,18 @@ pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
         let _ = (title, start);
         None
     }
+}
+
+/// A file dialog owned by the host's window when the editor is embedded in
+/// one, so it opens over the host rather than as a window of its own,
+/// behind it and on the taskbar. Unchanged otherwise.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn owned(dialog: rfd::FileDialog) -> rfd::FileDialog {
+    #[cfg(windows)]
+    if let Some(owner) = crate::embed::dialog_owner() {
+        return dialog.set_parent(&owner);
+    }
+    dialog
 }
 
 /// Where a folder dialog asked to start at `start` can open: `start`
@@ -1140,7 +1184,7 @@ pub fn save_file(
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let (family, extensions) = filter;
-        rfd::FileDialog::new()
+        owned(rfd::FileDialog::new())
             .set_title(title)
             .set_directory(directory)
             .set_file_name(name)
@@ -1159,7 +1203,7 @@ pub fn save_file(
 pub fn pick_files(title: &str, filter: Option<(&str, &[&str])>) -> Option<Vec<PathBuf>> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let mut dialog = rfd::FileDialog::new().set_title(title);
+        let mut dialog = owned(rfd::FileDialog::new()).set_title(title);
         if let Some((name, extensions)) = filter {
             dialog = dialog.add_filter(name, extensions);
         }
