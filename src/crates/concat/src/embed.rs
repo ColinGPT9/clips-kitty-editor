@@ -18,7 +18,8 @@
 //!   physical pixels of the host window's client area;
 //! - `host.set_visible {visible}`: shown or hidden, as the host switches
 //!   pages;
-//! - `host.focus`: the keyboard to the editor;
+//! - `host.focus`: the keyboard to the editor; `host.blur`: back to the
+//!   host's window (a click on the host's page does not take it back);
 //! - `host.close`: the editor's own close (the project is saved first);
 //! - `host.info`: the editor's window, its parent and where it is.
 //!
@@ -450,6 +451,9 @@ mod imp {
     /// stays the window's. On the event loop's thread.
     fn apply_visible(visible: bool) {
         let done = slint::invoke_from_event_loop(move || {
+            if !visible {
+                give_focus_back();
+            }
             crate::host::Shell::with(|_, app| {
                 use slint::winit_030::WinitWindowAccessor;
                 slint::ComponentHandle::window(&app).with_winit_window(|window| {
@@ -474,6 +478,33 @@ mod imp {
                 unsafe { win::SetFocus(child) };
             }
         });
+    }
+
+    /// The keyboard back to the host's top-level window, when the editor has
+    /// it. A click on the host's own page does not move it: the host's
+    /// window was active all along, so it sees no reason to take the focus,
+    /// and keys went on reaching the editor. This thread shares the host's
+    /// input queue (a child window's thread always does), so it can hand the
+    /// focus over. On the event loop's thread.
+    fn give_focus_back() {
+        let child = CHILD.load(Ordering::SeqCst);
+        if child == 0 {
+            return;
+        }
+        // SAFETY: plain Win32 calls on this thread's own window and its root.
+        unsafe {
+            let focused = win::GetFocus();
+            if focused == child || (focused != 0 && win::IsChild(child, focused) != 0) {
+                let root = win::GetAncestor(child, win::GA_ROOT);
+                if root != 0 {
+                    win::SetFocus(root);
+                }
+            }
+        }
+    }
+
+    fn blur() {
+        let _ = slint::invoke_from_event_loop(give_focus_back);
     }
 
     /// Whether the pointer is over the editor's window (or something in it).
@@ -648,13 +679,17 @@ mod imp {
                 focus();
                 Ok(json!({}))
             }
+            "host.blur" => {
+                blur();
+                Ok(json!({}))
+            }
             "host.close" => {
                 close("as the host asked");
                 Ok(json!({}))
             }
             "host.info" => Ok(info()),
             other => Err(format!(
-                "{other} is not a host method: host.set_bounds, host.set_visible, host.focus, host.close or host.info"
+                "{other} is not a host method: host.set_bounds, host.set_visible, host.focus, host.blur, host.close or host.info"
             )),
         }
     }
