@@ -2963,20 +2963,26 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
     // launch screen, or the system taking it back - with no close request
     // first, and the process then left without a save: the edits since the
     // last autosave were lost and the project's lock was left behind. A
-    // desktop's every way out closes the project before the loop ends.
-    #[cfg(target_os = "android")]
-    Shell::with(|shell, _| {
-        let mut studio = shell.studio.borrow_mut();
-        closing("by the system");
-        if studio.session.is_some()
-            && let Err(error) = studio.close_project()
-        {
-            log::error!(
-                "close: saving {} as the system ended the app failed: {error}; it closes without it",
-                studio.project_name
-            );
-        }
-    });
+    // desktop's every way out closes the project before the loop ends -
+    // except an editor embedded in a host's window (`--embed`): when the
+    // host's window is destroyed, Windows destroys the editor's with it and
+    // the loop ends the same way, with no close request.
+    if cfg!(target_os = "android") || embed::active() {
+        Shell::with(|shell, _| {
+            let mut studio = shell.studio.borrow_mut();
+            if cfg!(target_os = "android") || studio.session.is_some() {
+                closing("by the system");
+            }
+            if studio.session.is_some()
+                && let Err(error) = studio.close_project()
+            {
+                log::error!(
+                    "close: saving {} as the system ended the app failed: {error}; it closes without it",
+                    studio.project_name
+                );
+            }
+        });
+    }
     stop_exports();
     drop(startup_mark);
     leave(0);
