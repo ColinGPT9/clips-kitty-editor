@@ -565,8 +565,11 @@ mod imp {
         });
     }
 
-    /// Ends the editor when the host's window goes: the close above, and,
-    /// should the loop not end, the process a little later.
+    /// Ends the editor when the host's window goes: the project is saved and
+    /// the process leaves, without Slint's close (its hide reaches winit,
+    /// which panics on the destroyed window: seen on run 44021141732's
+    /// build). Should the event loop not take the errand, the process
+    /// leaves a little later anyway.
     pub fn watch_parent(parent: isize) {
         let started = std::thread::Builder::new()
             .name("embed parent watch".to_owned())
@@ -580,9 +583,8 @@ mod imp {
                 }
                 log::warn!("embed: the host's window {parent:#x} is gone; the editor closes");
                 CHILD.store(0, Ordering::SeqCst);
-                close("the host's window is gone");
                 let _ = slint::invoke_from_event_loop(|| {
-                    let _ = slint::quit_event_loop();
+                    crate::embedded_host_gone();
                 });
                 std::thread::sleep(Duration::from_secs(10));
                 log::warn!("embed: the event loop did not end after the host went; exiting");

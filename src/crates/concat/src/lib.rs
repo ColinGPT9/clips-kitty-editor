@@ -3034,6 +3034,29 @@ const EXPORT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
 /// `export.failed`, the callers hung up (#431). A render stops at its next
 /// frame and removes its files on the way out; one that does not stop
 /// within [`EXPORT_PATIENCE`] does not keep the quit from quitting.
+/// The host's window of an embedded editor (`--embed`) is gone, and with it
+/// the editor's own window, which Windows destroyed as its child: the
+/// project is saved and closed and the process leaves here, on the event
+/// loop's thread, without the loop or the window being asked anything -
+/// winit panics on a window handle that no longer exists.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn embedded_host_gone() -> ! {
+    Shell::with(|shell, _| {
+        let mut studio = shell.studio.borrow_mut();
+        if studio.session.is_some() {
+            closing("by the host's window going away");
+            if let Err(error) = studio.close_project() {
+                log::error!(
+                    "close: saving {} as the host's window went failed: {error}; it closes without it",
+                    studio.project_name
+                );
+            }
+        }
+    });
+    stop_exports();
+    leave(0);
+}
+
 fn stop_exports() {
     let mut held = None;
     Shell::with(|shell, _| {
