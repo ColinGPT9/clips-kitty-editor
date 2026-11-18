@@ -100,7 +100,8 @@ impl Session {
                     > concat_project::DOCUMENT_VERSION =>
                 {
                     return Err(format!(
-                        "{path} was saved by a newer Concat than this one: update to open it"
+                        "{path} was saved by a newer {} than this one: update to open it",
+                        crate::brand::NAME
                     ));
                 }
                 None => {

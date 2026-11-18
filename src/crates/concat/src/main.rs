@@ -24,7 +24,12 @@ fn main() -> Result<(), slint::PlatformError> {
     // with no standard output - is not a reason to panic.
     if launch == Ok(Launch::Version) {
         use std::io::Write;
-        let _ = writeln!(std::io::stdout(), "concat {}", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(
+            std::io::stdout(),
+            "{} {}",
+            concat_host::brand::BINARY,
+            env!("CARGO_PKG_VERSION")
+        );
         return Ok(());
     }
     // The API's contract, for a client generator or the docs: no log, no
@@ -68,6 +73,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // A failure here is the one this binary would otherwise swallow: with
     // no console, the runtime's "Error: ..." on standard error is lost.
     // https://github.com/jub0t/Concat/issues/135
+    // A host that asked to embed the editor and got its options wrong is
+    // told on standard error, with exit code 2, and never in a dialog.
+    if let Err(why) = &launch
+        && std::env::args_os().any(|arg| arg == "--embed")
+    {
+        use std::io::Write;
+        log::error!("start: not embedding: {why}");
+        let _ = writeln!(std::io::stderr(), "{why}");
+        std::process::exit(2);
+    }
     let launch = launch
         .map_err(slint::PlatformError::Other)
         .inspect_err(concat::report_startup_failure)?;
@@ -76,9 +91,16 @@ fn main() -> Result<(), slint::PlatformError> {
             concat::run_with_project(project).inspect_err(concat::report_startup_failure)
         }
         Launch::Embedded { project, embed } => {
-            concat::embed::set(embed)
-                .map_err(slint::PlatformError::Other)
-                .inspect_err(concat::report_startup_failure)?;
+            // Refused in a line on standard error and with exit code 2,
+            // never in a dialog: the one who started it is a program, and
+            // a box with nobody to press OK would sit over its window.
+            if let Err(why) = concat::embed::set(embed) {
+                use std::io::Write;
+                log::error!("start: not embedding: {why}");
+                let _ = writeln!(std::io::stderr(), "{why}");
+                std::process::exit(2);
+            }
+            concat::embed::set_project(project.as_deref());
             concat::run_with_project(project).inspect_err(concat::report_startup_failure)
         }
         Launch::Software => {

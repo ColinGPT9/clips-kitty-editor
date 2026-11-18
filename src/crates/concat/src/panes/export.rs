@@ -89,6 +89,9 @@ pub struct ExportPane {
     pub message: String,
     /// Where the finished file is, for Reveal.
     pub written: String,
+    /// Where the render that is running will leave its file: what an
+    /// embedding host is told of an export that failed or was cancelled.
+    pub pending: String,
     /// When the render started, for a real ETA.
     started_at: Option<std::time::Instant>,
 }
@@ -118,6 +121,7 @@ impl Default for ExportPane {
             stage: String::new(),
             message: String::new(),
             written: String::new(),
+            pending: String::new(),
             started_at: None,
         }
     }
@@ -139,6 +143,15 @@ impl ExportPane {
                 self.resolution = Self::own_rung(studio);
                 self.rate = 0;
                 self.follow_canvas(studio);
+                // Embedded in a host's window that named the folder
+                // exports go to: the file goes there, under the name the
+                // host gave to begin with (still the person's to change).
+                if let Some((folder, name)) = crate::embed::export_target() {
+                    self.folder = folder;
+                    if let Some(name) = name {
+                        self.name = name;
+                    }
+                }
             }
             ExportMsg::Close => self.open = false,
             ExportMsg::NameEdited(name) => self.name = name,
@@ -210,6 +223,19 @@ impl ExportPane {
                 self.phase = ExportPhase::Done;
                 self.progress = 1.0;
                 self.written = written.clone();
+                // The host of an embedded editor learns of it here, once
+                // the file is whole under its own name: the engine renders
+                // beside the file and renames at the end (concat-export's
+                // `finish`), and this message is sent after that.
+                if crate::embed::active() {
+                    crate::embed::export_ended(
+                        "done",
+                        studio.session.as_ref().map_or("", |session| session.path()),
+                        &written,
+                        self.size(studio),
+                        "",
+                    );
+                }
                 // A phone moves the file to where its gallery shows it, and
                 // the sheet says "finished" once it is there.
                 let handed = platform::publish_export(written.into(), |result| {
@@ -230,6 +256,16 @@ impl ExportPane {
                 studio.notify(&tf("export.couldNotPublish", &[&folder, &error]), true);
             }
             ExportMsg::Finished(Err(error)) => {
+                if crate::embed::active() {
+                    let cancelled = self.phase == ExportPhase::Idle;
+                    crate::embed::export_ended(
+                        if cancelled { "cancelled" } else { "failed" },
+                        studio.session.as_ref().map_or("", |session| session.path()),
+                        &self.pending,
+                        self.size(studio),
+                        if cancelled { "" } else { error.as_str() },
+                    );
+                }
                 if self.phase == ExportPhase::Idle {
                     // Cancelled: the sheet already went back to idle.
                     return;
@@ -469,6 +505,11 @@ impl ExportPane {
             studio.confirm = Some(crate::studio::Confirm::ReplaceExport { path: output });
             return;
         }
+        // The folder a host named may not be there yet: it is the host's
+        // to name and the editor's to write into.
+        if crate::embed::export_fixed() {
+            let _ = std::fs::create_dir_all(&self.folder);
+        }
         let job = match studio.host.exporter.begin() {
             Ok(job) => job,
             Err(error) => {
@@ -516,6 +557,7 @@ impl ExportPane {
         self.stage = t("export.preparing");
         self.message.clear();
         self.written.clear();
+        self.pending = output.clone();
         self.started_at = Some(std::time::Instant::now());
 
         spawn(
@@ -596,6 +638,7 @@ impl ExportPane {
         let container = self.codec(studio).container();
         ExportData {
             open: self.open,
+            fixed_folder: crate::embed::export_fixed(),
             name: self.name.as_str().into(),
             // Where the file ends up: on a phone, the folder its gallery
             // shows, not the app's own that the export writes into.

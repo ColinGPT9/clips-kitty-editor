@@ -1,3 +1,8 @@
+> **This repository is Clips Kitty Editor**, a modified build of [Concat](https://github.com/jub0t/Concat)
+> made to run inside the [Clips Kitty](https://github.com/ColinGPT9/clips-studio) desktop app. It is not Concat and is
+> not offered under that name. What it changes, and why, is in [PATCHES.md](PATCHES.md); the licence is the same,
+> AGPL-3.0-or-later. Everything below this note is Concat's own README, kept as it is.
+
 <p align="center">
   <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
 </p>

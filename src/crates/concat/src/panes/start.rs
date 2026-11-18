@@ -97,6 +97,7 @@ pub fn shown<'a>(
 /// The official site, which the guides and the developer docs are pages of.
 const SITE: &str = "https://concat.standalones.org";
 /// The repository: the code, the issues, the releases.
+#[allow(dead_code)]
 pub const REPOSITORY: &str = "https://github.com/jub0t/Concat";
 
 /// Where each of the launch screen's links goes, by the name the screen
@@ -108,19 +109,22 @@ pub fn link(name: &str) -> Option<String> {
     Some(match name {
         "guides" => format!("{SITE}/guides/"),
         "first-edit" => format!("{SITE}/guides/first-edit/"),
-        "report" => format!("{SITE}/guides/report-a-problem/"),
-        "github" => REPOSITORY.to_owned(),
+        "report" => format!("{}/issues", concat_host::brand::SOURCE_URL),
+        // This build's own source, and its own issues for a report: a
+        // fault in a modified build is not the upstream project's to hear
+        // about first. See concat-host's brand.rs.
+        "github" => concat_host::brand::SOURCE_URL.to_owned(),
+        // Settings > About's credit: the editor this build is made from.
+        "based-on" => concat_host::brand::BASED_ON_URL.to_owned(),
         // The gradient card: this version's "What's new" post on the
         // website's blog, the polished telling of its release notes.
-        "news" => format!(
-            "{SITE}/blog/whats-new-in-{}/",
-            env!("CARGO_PKG_VERSION").replace('.', "-")
+        // What this build changes, in place of the upstream project's
+        // news, chat and release notes, which are about Concat's releases.
+        "news" | "release-notes" => format!(
+            "{}/blob/kitty/embed/PATCHES.md",
+            concat_host::brand::SOURCE_URL
         ),
-        // The invite the README carries.
-        "discord" => "https://discord.gg/DVuPfpXfqP".to_owned(),
-        // The notes for the release this build is, under the tag the
-        // release workflow pushes.
-        "release-notes" => format!("{REPOSITORY}/releases/tag/v{}", env!("CARGO_PKG_VERSION")),
+        "discord" => format!("{}/issues", concat_host::brand::SOURCE_URL),
         _ => return None,
     })
 }
@@ -211,12 +215,14 @@ fn default_location() -> String {
 /// `~/Desktop` there is a folder the app is not allowed to make, and every
 /// new project failed with EPERM. https://github.com/jub0t/Concat/issues/299
 fn location_on(os: &str, desktop: Option<PathBuf>, home: impl Fn(&str) -> String) -> String {
+    // The folder is named after this build; see concat-host's brand.rs.
+    const BRAND: &str = concat_host::brand::NAME;
     match os {
-        "android" => home("Concat"),
-        "ios" => home("Documents/Concat"),
+        "android" => home(BRAND),
+        "ios" => home(&format!("Documents/{BRAND}")),
         _ => desktop
-            .map(|desktop| desktop.join("Concat").to_string_lossy().into_owned())
-            .unwrap_or_else(|| home("Desktop/Concat")),
+            .map(|desktop| desktop.join(BRAND).to_string_lossy().into_owned())
+            .unwrap_or_else(|| home(&format!("Desktop/{BRAND}"))),
     }
 }
 
@@ -627,17 +633,24 @@ mod tests {
     fn each_platform_has_a_place_for_new_projects() {
         let home = |name: &str| format!("/home/{name}");
         let desktop = || Some(PathBuf::from("/desk"));
+        let brand = concat_host::brand::NAME;
         assert_eq!(
             location_on("ios", desktop(), home),
-            "/home/Documents/Concat"
+            format!("/home/Documents/{brand}")
         );
-        assert_eq!(location_on("ios", None, home), "/home/Documents/Concat");
-        assert_eq!(location_on("android", None, home), "/home/Concat");
+        assert_eq!(
+            location_on("ios", None, home),
+            format!("/home/Documents/{brand}")
+        );
+        assert_eq!(location_on("android", None, home), format!("/home/{brand}"));
         assert_eq!(
             PathBuf::from(location_on("macos", desktop(), home)),
-            Path::new("/desk").join("Concat")
+            Path::new("/desk").join(brand)
         );
-        assert_eq!(location_on("linux", None, home), "/home/Desktop/Concat");
+        assert_eq!(
+            location_on("linux", None, home),
+            format!("/home/Desktop/{brand}")
+        );
     }
 
     /// The next untitled name skips every folder already there, and starts
@@ -720,9 +733,10 @@ mod tests {
                 "{name}"
             );
         }
-        assert_eq!(
-            link("release-notes").unwrap(),
-            format!("{REPOSITORY}/releases/tag/v{}", env!("CARGO_PKG_VERSION"))
+        assert!(
+            link("release-notes")
+                .unwrap()
+                .starts_with(concat_host::brand::SOURCE_URL)
         );
         assert_eq!(link("nowhere"), None);
     }

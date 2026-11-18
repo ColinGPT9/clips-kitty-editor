@@ -34,7 +34,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $bundle = (Resolve-Path $Bundle).Path
-$exe = Join-Path $bundle "concat.exe"
+# Clips Kitty Editor's bundle names the program for this build; upstream's
+# bundle keeps concat.exe. Whichever is there is the one tried.
+$exe = Join-Path $bundle "clips-kitty-editor.exe"
+if (-not (Test-Path $exe)) { $exe = Join-Path $bundle "concat.exe" }
 if (-not (Test-Path $exe)) { throw "$exe is not there" }
 
 function Say($text) { Write-Host ""; Write-Host "== $text" }

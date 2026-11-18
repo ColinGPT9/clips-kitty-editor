@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Clips Kitty contributors
+
+// The name this build goes by, for the two places Slint needs it as a
+// literal: the window's title and the credit on Settings > About. Every
+// other sentence comes through `I18n.t`, which Rust names the build in
+// (i18n.rs, concat-host's brand.rs). Keep the values here the same as
+// brand.rs; see PATCHES.md at the repository's root.
+export global Brand {
+    /// What a person sees: Clips Kitty Editor.
+    out property <string> name: "Clips Kitty Editor";
+    /// The editor this one is built from, named only in the credit.
+    out property <string> based-on: "Based on Concat";
+    /// The licence of both.
+    out property <string> licence: "AGPL-3.0-or-later";
+    /// Where the editor this one is built from lives.
+    out property <string> based-on-url: "https://github.com/jub0t/Concat";
+    /// Where this build's own source is.
+    out property <string> source-url: "https://github.com/ColinGPT9/clips-kitty-editor";
+}

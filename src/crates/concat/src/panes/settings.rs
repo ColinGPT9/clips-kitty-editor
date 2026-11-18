@@ -662,6 +662,11 @@ impl SettingsPane {
     /// Asks GitHub for the releases on a worker; the answer comes back as
     /// [`SettingsMsg::UpdatesFetched`].
     fn check_updates(&mut self) {
+        // Clips Kitty Editor never asks the upstream project's release
+        // list, and its Version page is not shown; see brand.rs.
+        if !concat_host::brand::UPDATES {
+            return;
+        }
         if self.checking {
             return;
         }
@@ -795,7 +800,10 @@ impl SettingsPane {
             let config = concat_server::Config {
                 json: Some(crate::embed::api_address()),
                 token: crate::embed::token(),
-                discovery: Some(concat_server::discovery::path_in(&dirs.config)),
+                // Not listed in automation.json: the address and the
+                // token stay between the host and the editor, so no other
+                // program on the machine finds the embedded editor's API.
+                discovery: None,
                 host: Some(crate::embed::host_methods()),
                 ..concat_server::Config::default()
             };
@@ -813,7 +821,7 @@ impl SettingsPane {
                             .map(|address| address.to_string())
                             .unwrap_or_default()
                     );
-                    crate::embed::announce(server.json_addr(), server.token());
+                    crate::embed::announce(server.json_addr());
                     studio.host.server = Some(server);
                 }
                 Err(error) => {
@@ -1061,7 +1069,10 @@ impl SettingsPane {
             remember_layout: studio.prefs.remembers_layout(),
             layout_switchable: !crate::platform::phone(),
             gpu: !studio.prefs.draws_in_software(),
-            gpu_switchable: cfg!(any(windows, target_os = "linux", target_os = "macos")),
+            // Not embedded in a host's window: the switch is read at the
+            // next start, and an embedded start does not obey it (lib.rs).
+            gpu_switchable: cfg!(any(windows, target_os = "linux", target_os = "macos"))
+                && !crate::embed::active(),
             shares_log: cfg!(target_os = "android"),
             magnetic: studio.prefs.magnetic(),
             download_source: self.download_source as i32,

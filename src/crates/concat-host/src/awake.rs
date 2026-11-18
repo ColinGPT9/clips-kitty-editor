@@ -92,10 +92,11 @@ mod system {
             if !on {
                 return;
             }
-            let mut reason: Vec<u16> = "Concat is exporting or processing media"
-                .encode_utf16()
-                .chain([0])
-                .collect();
+            let mut reason: Vec<u16> =
+                crate::brand::branded("Concat is exporting or processing media")
+                    .encode_utf16()
+                    .chain([0])
+                    .collect();
             let context = REASON_CONTEXT {
                 Version: 0,
                 Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,

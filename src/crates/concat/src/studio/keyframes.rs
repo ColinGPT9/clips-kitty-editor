@@ -2545,7 +2545,7 @@ impl Studio {
         });
         let has_selection_media = !self.media.selected.is_empty();
 
-        match self.open_menu {
+        let rows = match self.open_menu {
             0 => vec![
                 row(
                     "add-selected",
@@ -2771,7 +2771,35 @@ impl Studio {
                 ),
             ],
             _ => Vec::new(),
+        };
+        // Embedded in a host's window (`--embed`), the host opens and
+        // closes the projects and the editor: those rows are not offered,
+        // and no rule is left with nothing above or below it.
+        if !crate::embed::active() {
+            return rows;
         }
+        let mut kept: Vec<MenuItemData> = Vec::new();
+        for row in rows {
+            if ["open", "close-project", "close-window"].contains(&row.id.as_str()) {
+                continue;
+            }
+            let rule = row.kind == MenuRow::Separator;
+            if rule
+                && kept
+                    .last()
+                    .is_none_or(|last| last.kind == MenuRow::Separator)
+            {
+                continue;
+            }
+            kept.push(row);
+        }
+        if kept
+            .last()
+            .is_some_and(|last| last.kind == MenuRow::Separator)
+        {
+            kept.pop();
+        }
+        kept
     }
 
     /// The clip's track flags, as one command per flag that changed, plus

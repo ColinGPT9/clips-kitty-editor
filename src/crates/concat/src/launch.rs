@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: concat [--project <PROJECT_DIRECTORY> | --embed <HWND> [--bounds <X,Y,W,H>] [--api <ADDRESS>] [--project <PROJECT_DIRECTORY>] | --software | --mcp [auto|window|headless] | --schema | --version | --smoke | --smoke-export <CLIP> | --whisper-cpu]";
+const USAGE: &str = "usage: clips-kitty-editor [--project <PROJECT_DIRECTORY> | --embed <HWND> [--bounds <X,Y,W,H>] [--api <ADDRESS>] [--project <PROJECT_DIRECTORY>] [--export-dir <DIRECTORY>] [--export-name <NAME>] [--hidden] | --software | --mcp [auto|window|headless] | --schema | --version | --smoke | --smoke-export <CLIP> | --whisper-cpu]";
 
 /// What one run of the binary was asked to do.
 #[derive(Debug, PartialEq, Eq)]
@@ -109,8 +109,9 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, String>
     Ok(launch)
 }
 
-/// What follows `--embed`: the window, then `--bounds`, `--api` and
-/// `--project` in any order, each at most once.
+/// What follows `--embed`: the window, then `--bounds`, `--api`,
+/// `--project`, `--export-dir`, `--export-name` and `--hidden` in any
+/// order, each at most once. `--hidden` takes no value.
 fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, String> {
     let parent = args
         .next()
@@ -122,9 +123,19 @@ fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, St
         parent,
         bounds: None,
         api: None,
+        export_dir: None,
+        export_name: None,
+        hidden: false,
     };
     let mut project = None;
     while let Some(option) = args.next() {
+        if option == "--hidden" {
+            if embed.hidden {
+                return Err(USAGE.into());
+            }
+            embed.hidden = true;
+            continue;
+        }
         let value = args
             .next()
             .filter(|value| !value.is_empty())
@@ -145,6 +156,15 @@ fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, St
             );
         } else if option == "--project" && project.is_none() && value != "--project" {
             project = Some(PathBuf::from(value));
+        } else if option == "--export-dir" && embed.export_dir.is_none() {
+            embed.export_dir = Some(PathBuf::from(value));
+        } else if option == "--export-name" && embed.export_name.is_none() {
+            embed.export_name = Some(
+                value
+                    .to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "--export-name takes a name in Unicode".to_string())?,
+            );
         } else {
             return Err(USAGE.into());
         }
@@ -247,7 +267,10 @@ mod tests {
                 embed: Embed {
                     parent: 0x1f2e,
                     bounds: None,
-                    api: None
+                    api: None,
+                    export_dir: None,
+                    export_name: None,
+                    hidden: false
                 }
             }
         );
@@ -273,10 +296,47 @@ mod tests {
                         width: 1164,
                         height: 861
                     }),
-                    api: Some("127.0.0.1:7420".parse().unwrap())
+                    api: Some("127.0.0.1:7420".parse().unwrap()),
+                    export_dir: None,
+                    export_name: None,
+                    hidden: false
                 }
             }
         );
+        // The host's own options: where exports go, what they are called
+        // to begin with, and a start that shows nothing until asked.
+        assert_eq!(
+            parse_strs(&[
+                "--embed",
+                "4242",
+                "--hidden",
+                "--export-name",
+                "My clip",
+                "--project",
+                "clips/one",
+                "--export-dir",
+                "clips/one/out"
+            ])
+            .unwrap(),
+            Launch::Embedded {
+                project: Some(PathBuf::from("clips/one")),
+                embed: Embed {
+                    parent: 4242,
+                    bounds: None,
+                    api: None,
+                    export_dir: Some(PathBuf::from("clips/one/out")),
+                    export_name: Some("My clip".to_owned()),
+                    hidden: true
+                }
+            }
+        );
+        assert!(matches!(
+            parse_strs(&["--embed", "12", "--bounds", "0,0,10,10", "--hidden"]),
+            Ok(Launch::Embedded {
+                embed: Embed { hidden: true, .. },
+                ..
+            })
+        ));
         for args in [
             vec!["--embed"],
             vec!["--embed", "0"],
@@ -287,6 +347,13 @@ mod tests {
             vec!["--embed", "12", "--project", "a", "--project", "b"],
             vec!["--embed", "12", "--smoke"],
             vec!["--project", "a", "--embed", "12"],
+            vec!["--embed", "12", "--hidden", "--hidden"],
+            vec!["--embed", "12", "--export-dir"],
+            vec!["--embed", "12", "--export-dir", "a", "--export-dir", "b"],
+            vec!["--embed", "12", "--export-name", "a", "--export-name", "b"],
+            vec!["--embed", "12", "--export-name", ""],
+            vec!["--hidden"],
+            vec!["--export-dir", "a"],
         ] {
             assert!(parse_strs(&args).is_err(), "{args:?}");
         }

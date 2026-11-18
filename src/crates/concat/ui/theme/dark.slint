@@ -52,6 +52,10 @@
 // than by the surfaces around them.
 import { Accent } from "accent.slint";
 
+// Clips Kitty Editor: the surfaces, the ink, the lanes and the playhead are
+// Clips Kitty's navy and blue (base #0a1628, surface #13243d, raised
+// #1c3354, ink #f1f5f9, muted #94a3b8, accent #38bdf8), each step of the
+// ladder kept where upstream's was. See PATCHES.md.
 export global Dark {
     // surfaces
     //
@@ -79,12 +83,12 @@ export global Dark {
     // separating a pane from the ground; without one the value step has to do
     // all of it, and a darker ladder leaves the panes reading as holes in the
     // window rather than as surfaces on it.
-    out property <color> panel: #212123;
-    out property <color> raised: #2b2b2e;
-    out property <color> well: #19191b;
-    out property <color> field: #323235;
-    out property <color> field-hover: #3b3b3e;
-    out property <color> field-active: #46464a;
+    out property <color> panel: #13243d;
+    out property <color> raised: #1c3354;
+    out property <color> well: #0d1b30;
+    out property <color> field: #223b5f;
+    out property <color> field-hover: #2a466e;
+    out property <color> field-active: #33527f;
 
     // the launch screen's own ladder — a deeper cut of the one above
     //
@@ -100,21 +104,21 @@ export global Dark {
     // reads: `launch-well` is sunken under the card, `launch-raised` is the
     // lift a hover gives, `launch-field` is a chip that is the answer. Only
     // the whole ladder has moved down.
-    out property <color> launch-page: #0e0e10;
-    out property <color> launch-panel: #161619;
-    out property <color> launch-well: #101013;
-    out property <color> launch-raised: #1e1e22;
-    out property <color> launch-field: #26262b;
-    out property <color> launch-field-active: #313138;
+    out property <color> launch-page: #070f1d;
+    out property <color> launch-panel: #0e1c32;
+    out property <color> launch-well: #0a1628;
+    out property <color> launch-raised: #13243d;
+    out property <color> launch-field: #1c3354;
+    out property <color> launch-field-active: #26426b;
 
     // hairlines — white-alpha, so they hold on panel, well, and ground alike.
     out property <color> line: #ffffff1a;         // rgb(255 255 255 / 0.1)
     out property <color> line-strong: #ffffff33;  // rgb(255 255 255 / 0.2)
 
     // text
-    out property <color> fg: #f5f5f7;
-    out property <color> fg-muted: #a1a1a6;
-    out property <color> fg-dim: #6e6e73;
+    out property <color> fg: #f1f5f9;
+    out property <color> fg-muted: #94a3b8;
+    out property <color> fg-dim: #64748b;
     // One step past `fg`, away from the ground: pure white here, pure black
     // on the light palette. For the one button whose fill *is* the ink —
     // the launch screen's Create — where hover has to mean more contrast
@@ -137,7 +141,7 @@ export global Dark {
     // which is where each one's name lives.
     out property <[Accent]> accents: [
         { accent: #cbf53f, hover: #d9ff63, soft: #cbf53f33, on: #15220a },   // lime
-        { accent: #5fb8ff, hover: #82c9ff, soft: #5fb8ff33, on: #061c33 },   // sky
+        { accent: #38bdf8, hover: #7dd3fc, soft: #38bdf833, on: #062033 },   // sky: Clips Kitty's blue, the default (brand.rs)
         { accent: #b394ff, hover: #c6b0ff, soft: #b394ff33, on: #1d0f3d },   // violet
         { accent: #ff6fa3, hover: #ff8fb8, soft: #ff6fa333, on: #38091c },   // rose
         { accent: #ffb340, hover: #ffc46a, soft: #ffb34033, on: #2d1a00 },   // amber
@@ -234,14 +238,14 @@ export global Dark {
     // still reads as a well cut into the pane, and a clip's own dark ground
     // now sits *on* something rather than floating in a hole. Both stay well
     // under `panel`, or the empty stretches would read as content.
-    out property <color> lane: #1a1a1c;
-    out property <color> lane-alt: #1e1e20;
+    out property <color> lane: #0e1c31;
+    out property <color> lane-alt: #11213a;
     // The ruler is its own surface, not the first row of the stack: a step
     // under the darker lane, so the strip carrying the timestamps reads as
     // the floor of the pane and the banding starts below it. It followed
     // `raised` before, which put it above the panel and made it the brightest
     // thing in the pane — the opposite of what a ruler should be.
-    out property <color> ruler: #171719;
+    out property <color> ruler: #0c182b;
     /// The vertical rules. 6% white was set against a lane that was still a
     /// dark grey, and all but vanished when the lanes went black — a grid that
     /// costs elements and reads as nothing. 14% clears both of the tones the
@@ -252,7 +256,7 @@ export global Dark {
     // a read of the accent, so a change of accent leaves the playhead where the
     // eye learnt to find it. Settings > Appearance can put any colour in its
     // place (theme.slint, `playhead-custom`).
-    out property <color> playhead: #cbf53f;
+    out property <color> playhead: #38bdf8;
     // Drawn on the audio clip's own dark ground, so it is a light wash of the
     // kind's hue rather than the vivid mark itself.
     out property <color> wave: #a7f0c2b3;      // 0.7 alpha
@@ -300,7 +304,7 @@ export global Dark {
     // A sample of something meant for footage - a title look on a card -
     // sits on a dark ground so a white title reads, but a grey one rather
     // than the stage's black, so the card is a card and not a hole.
-    out property <color> sample-ground: #37373a;
+    out property <color> sample-ground: #223b5f;
 
     // The sheet that covers the window behind a dialog. Dark rather than
     // tinted: it has to work over the whole editor, and any hue in it would
@@ -325,6 +329,6 @@ export global Dark {
 
     // window ground the panes float on — a shade under the darkest panel so
     // the gutters read as gaps and not as seams
-    out property <color> page: #151517;
-    out property <color> page-fg-muted: #a1a1a6;
+    out property <color> page: #0a1628;
+    out property <color> page-fg-muted: #94a3b8;
 }

@@ -4,7 +4,7 @@
 # pinned toolchain, BtbN's FFmpeg 8.1 LGPL shared build, ONNX Runtime,
 # LLVM for libclang, whisper.cpp's CPU modules as DLLs - but with the
 # `release` profile and thin LTO, for a build in a fraction of the time, and
-# nothing packaged: the staged folder (concat.exe, its DLLs and notices) is
+# nothing packaged: the staged folder (clips-kitty-editor.exe, its DLLs and notices) is
 # uploaded as an artifact, to be tried inside the Clips Kitty window.
 #
 # Started by hand (workflow_dispatch), or by a push to a kitty/* branch
@@ -58,7 +58,7 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/Cargo.toml | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Building Concat $version (Clips Kitty Editor test build) at $(git rev-parse --short HEAD)"
+          echo "Building Clips Kitty Editor $version (based on Concat) at $(git rev-parse --short HEAD)"
 
       - name: FFmpeg development libraries and LLVM (Windows)
         timeout-minutes: 15
@@ -132,7 +132,9 @@ jobs:
         run: |
           set -o pipefail
           cargo test --release -p concat-server --target x86_64-pc-windows-msvc 2>&1 | tail -n 40
-          cargo test --release -p concat --bin concat --target x86_64-pc-windows-msvc 2>&1 | tail -n 40
+          cargo test --release -p concat --bin clips-kitty-editor --target x86_64-pc-windows-msvc 2>&1 | tail -n 40
+          cargo test --release -p concat-host --lib --target x86_64-pc-windows-msvc brand:: 2>&1 | tail -n 20
+          cargo test --release -p concat --lib --target x86_64-pc-windows-msvc embed:: 2>&1 | tail -n 30
 
       - name: Stage (Windows)
         shell: pwsh
@@ -143,7 +145,7 @@ jobs:
           $dir = "stage\clips-kitty-editor-windows-x86_64"
           $out = "src\target\x86_64-pc-windows-msvc\release"
           New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item "$out\concat.exe" $dir
+          Copy-Item "$out\clips-kitty-editor.exe" $dir
           Copy-Item "$env:FFMPEG_DIR\bin\*.dll" $dir
           Copy-Item "$env:ORT_DIR\lib\*.dll" $dir
           $built = Get-ChildItem "$out\build\whisper-rs-sys-*\out\bin\ggml-cpu-x64.dll" |
@@ -154,7 +156,7 @@ jobs:
           foreach ($module in "x64", "sandybridge", "haswell") {
             if (-not (Test-Path "$dir\ggml-cpu-$module.dll")) { throw "ggml-cpu-$module.dll is missing from the build" }
           }
-          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md $dir
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, PATCHES.md $dir
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
           $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory |
             Sort-Object FullName -Descending | Select-Object -First 1
@@ -172,7 +174,7 @@ jobs:
             }
           }
           $commit = git rev-parse HEAD
-          "Clips Kitty Editor test build of Concat $env:VERSION at $commit (run ${{ github.run_id }}), release profile, thin LTO." |
+          "Clips Kitty Editor $env:VERSION, based on Concat $env:VERSION, built at $commit (run ${{ github.run_id }}), release profile, thin LTO." |
             Out-File -Encoding utf8 "$dir\BUILD.txt"
           Get-ChildItem $dir | Format-Table Name, Length
 

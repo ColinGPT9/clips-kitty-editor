@@ -241,9 +241,14 @@ pub fn current() -> String {
 
 /// `key` in the interface's language: its translation, else its English,
 /// else - a key nothing lists - the key itself.
+///
+/// Whatever the locale calls the editor, the sentence names this build:
+/// the locales stay upstream's, word for word, and the name is put in
+/// here, the one door every string comes through. See `brand.rs`.
 pub fn t(key: &str) -> String {
     translated(key)
         .or_else(|| english().by_key.get(key).cloned())
+        .map(|text| concat_host::brand::branded(&text))
         .unwrap_or_else(|| key.to_owned())
 }
 

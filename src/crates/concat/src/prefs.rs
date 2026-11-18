@@ -215,13 +215,23 @@ impl Preferences {
     /// choice that has gone away should fall back to the default rather
     /// than to whatever happens to sit at its old position.
     pub fn accent_index(&self, names: impl IntoIterator<Item = impl AsRef<str>>) -> usize {
+        // Clips Kitty Editor: the default is the accent brand.rs names (its
+        // own blue), wherever the list has it, not the list's first.
+        let names: Vec<String> = names
+            .into_iter()
+            .map(|name| Self::accent_id(name.as_ref()))
+            .collect();
+        let default = names
+            .iter()
+            .position(|name| name == concat_host::brand::DEFAULT_ACCENT)
+            .unwrap_or(0);
         let Some(wanted) = self.accent.as_deref().map(str::trim) else {
-            return 0;
+            return default;
         };
         names
-            .into_iter()
-            .position(|name| Self::accent_id(name.as_ref()) == wanted.to_lowercase())
-            .unwrap_or(0)
+            .iter()
+            .position(|name| *name == wanted.to_lowercase())
+            .unwrap_or(default)
     }
 
     /// The id an accent is remembered under: its name, lower-cased, so the
@@ -564,10 +574,11 @@ mod tests {
     }
     const NAMES: [&str; 3] = ["Lime", "Sky", "Violet"];
 
-    /// Nothing remembered is the first accent, which is the default.
+    /// Nothing remembered is this build's own accent, which is the default.
     #[test]
-    fn no_accent_is_the_first() {
-        assert_eq!(Preferences::default().accent_index(NAMES), 0);
+    fn no_accent_is_the_brands() {
+        assert_eq!(Preferences::default().accent_index(NAMES), 1);
+        assert_eq!(Preferences::default().accent_index(["Lime", "Rose"]), 0);
     }
 
     /// A remembered name finds its row whatever its case or spacing, since
@@ -591,13 +602,13 @@ mod tests {
             accent: Some("chartreuse".to_owned()),
             ..Preferences::default()
         };
-        assert_eq!(prefs.accent_index(NAMES), 0);
+        assert_eq!(prefs.accent_index(NAMES), 1);
         assert_eq!(prefs.accent_index(Vec::<String>::new()), 0);
         let blank = Preferences {
             accent: Some(String::new()),
             ..Preferences::default()
         };
-        assert_eq!(blank.accent_index(NAMES), 0);
+        assert_eq!(blank.accent_index(NAMES), 1);
     }
 
     /// The id is what gets written and what gets matched, so the two have

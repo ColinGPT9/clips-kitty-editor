@@ -27,6 +27,9 @@ export enum ExportPhase { idle, running, done, failed }
 
 export struct ExportData {
     open: bool,
+    /// An embedding host named the folder exports go to: no folder row,
+    /// no Browse, no "Show in folder". See embed.rs.
+    fixed-folder: bool,
     /// the file name, without folder or extension
     name: string,
     /// the whole path, already shortened for display by whoever owns it
@@ -276,7 +279,7 @@ component DestinationSection inherits DialogSection {
             edited(text) => { root.name-edited(text); }
         }
 
-        if !root.phone: Button {
+        if !root.phone && !root.data.fixed-folder: Button {
             label: I18n.t("export.browse");
             glyph: Glyph.import;
             clicked => { root.browse(); }
@@ -285,7 +288,7 @@ component DestinationSection inherits DialogSection {
 
     // The whole path under the field rather than in it, so the part
     // you are editing is never the part that gets truncated away.
-    Text {
+    if !root.data.fixed-folder: Text {
         text: root.data.path;
         color: Theme.fg-dim;
         font-family: Theme.font-technical;
@@ -537,7 +540,7 @@ component ExportFooter inherits VerticalLayout {
         spacing: 6px;
         alignment: start;
 
-        if !root.phone: Button {
+        if !root.phone && !root.data.fixed-folder: Button {
             label: I18n.t("export.showInFolder");
             glyph: Glyph.import;
             clicked => { root.reveal(); }

@@ -10,6 +10,7 @@
 // embeds the same five so a title is set in the face the interface is.
 // Licensed under the SIL Open Font License; see LICENSE-HankenGrotesk.txt.
 import { I18n } from "i18n.slint";
+import { Brand } from "brand.slint";
 import "../../concat-text/fonts/HankenGrotesk-Regular.ttf";
 import "../../concat-text/fonts/HankenGrotesk-Medium.ttf";
 import "../../concat-text/fonts/HankenGrotesk-SemiBold.ttf";
@@ -189,11 +190,11 @@ export {
     NewVoiceData,
 }
 export component App inherits Window {
-    title: "Concat";
+    title: Brand.name;
     // The taskbar's and Alt-Tab's picture on Windows, and the window
     // list's on X11. A Mac takes its Dock icon from the bundle and ignores
     // this; the .exe's own, for Explorer, is embedded by build.rs.
-    icon: @image-url("../../../../assets/icons/concat_logo_256.png");
+    icon: @image-url("../../../../assets/icons/clips-kitty-editor-256.png");
     // Where the strip carries its own window buttons the platform's
     // decorations are not wanted, and this is the property Slint keeps
     // them off with: the winit backend re-applies `no-frame` to the
@@ -631,8 +632,11 @@ export component App inherits Window {
         }
         // Open and leaving work from the launch screen too: it opens
         // projects, and it is a window.
+        // Not embedded in a host's window: the host opens and closes the
+        // projects there, and closes the editor; see embed.rs.
         KeyBinding {
             keys: @keys(Control + O);
+            enabled: !root.embedded;
             activated => { root.app-menu-selected("open"); }
         }
         // ⌘W closes the window on a Mac. Elsewhere Ctrl+W closes the
@@ -640,7 +644,7 @@ export component App inherits Window {
         // the system's, and arrives as the window's close request.
         KeyBinding {
             keys: @keys(Control + W);
-            enabled: root.macos || !root.on-start;
+            enabled: (root.macos || !root.on-start) && !root.embedded;
             activated => {
                 root.app-menu-selected(root.macos ? "close-window" : "close-project");
             }
@@ -648,7 +652,7 @@ export component App inherits Window {
 
         KeyBinding {
             keys: @keys(Control + Q);
-            enabled: !root.macos;
+            enabled: !root.macos && !root.embedded;
             activated => { root.app-menu-selected("close-window"); }
         }
         // Everything the keymap owns lands here only when nothing else
@@ -779,7 +783,16 @@ export component App inherits Window {
                 export-clicked => { root.export-clicked(); }
             }
 
-            if root.on-start: StartScreen {
+            // Embedded in a host's window with no project open - between
+            // two projects, or one that would not open: an empty ground.
+            // The launch screen's New, Open, Recents and CapCut import are
+            // the host's to offer, on its own page.
+            if root.on-start && root.embedded: Rectangle {
+                vertical-stretch: 1;
+                background: Theme.page;
+            }
+
+            if root.on-start && !root.embedded: StartScreen {
                 vertical-stretch: 1;
 
                 recents: root.recents;
@@ -1028,6 +1041,8 @@ export component App inherits Window {
         width: root.width;
         height: root.height - root.sheets-top;
         phone: root.phone;
+        embedded: root.embedded;
+        brand-link(name) => { root.start-link(name); }
         data: root.settings;
         transcribers: root.transcribers;
         voices: root.voices;

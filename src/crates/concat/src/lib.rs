@@ -279,7 +279,13 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
 
     // Not for a smoke run: it exits through `leave`, past the mark's drop,
     // and the mark it left put the next real launch in software for nothing.
-    let (startup_mark, safe) = if smoke == Smoke::No {
+    // Nor embedded in a host's window (`--embed`): the host starts and
+    // stops the editor, and a stop in the first seconds is the host's
+    // doing, not a driver's. The mark is not left, the crash flag is not
+    // read or written, and the GPU switch in the settings is not obeyed;
+    // the host is told what the editor draws on (`host.state`) and says
+    // so itself.
+    let (startup_mark, safe) = if smoke == Smoke::No && !embed::active() {
         safe_start()
     } else {
         (None, false)

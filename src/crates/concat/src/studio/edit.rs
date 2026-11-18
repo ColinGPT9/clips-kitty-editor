@@ -542,8 +542,15 @@ impl Studio {
         self.dirty = false;
         let name = self.project_name.clone();
         let began = std::time::Instant::now();
+        // An embedding host is told the project has unsaved changes until
+        // this write is back, not only until it is handed over (embed.rs).
+        crate::embed::save_began();
         crate::host::spawn_in_project_publishing(
-            move || projects::save_ordered(&path, &document, ticket),
+            move || {
+                let written = projects::save_ordered(&path, &document, ticket);
+                crate::embed::save_ended();
+                written
+            },
             move |studio, _, _, result| match result {
                 Ok(_) if announce => {
                     log::info!(

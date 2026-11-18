@@ -27,6 +27,30 @@ pub fn adapter_description() -> Option<&'static str> {
     ADAPTER.get().map(String::as_str)
 }
 
+/// The adapter [`Gpu::acquire`] opened as a host is told it (embed.rs):
+/// its name, the system's name for what it draws through, and whether it
+/// is a software rasteriser.
+static OPENED: OnceLock<(String, &'static str, bool)> = OnceLock::new();
+
+/// What this run draws on, for an embedding host: whether the window or
+/// the monitor's compositor draws in software - a software adapter, a
+/// start asked to draw in software, or previews fallen back to the CPU -
+/// then the adapter's name and its backend, empty when none was found.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn graphics() -> (bool, String, String) {
+    let asked = std::env::var("CONCAT_GPU")
+        .is_ok_and(|value| value.trim().eq_ignore_ascii_case("software"));
+    let (name, backend, cpu) = OPENED
+        .get()
+        .map(|(name, backend, cpu)| (name.clone(), (*backend).to_owned(), *cpu))
+        .unwrap_or_default();
+    (
+        cpu || asked || concat_export::previews_on_cpu(),
+        name,
+        backend,
+    )
+}
+
 /// The shared device and what it was created from.
 #[derive(Clone)]
 pub struct Gpu {
@@ -105,6 +129,11 @@ impl Gpu {
         // https://github.com/jub0t/Concat/issues/135
         let info = adapter.get_info();
         log::info!("gpu: {}", adapter_words(&info));
+        let _ = OPENED.set((
+            info.name.clone(),
+            backend_words(info.backend),
+            info.device_type == wgpu::DeviceType::Cpu,
+        ));
         let _ = ADAPTER.set(if info.device_type == wgpu::DeviceType::Cpu {
             format!("{} · {} · software rasteriser", info.name, info.backend)
         } else {
@@ -179,6 +208,18 @@ impl Gpu {
             device: self.device.clone(),
             queue: self.queue.clone(),
         }
+    }
+}
+
+/// The system's name for what an adapter draws through.
+fn backend_words(backend: wgpu::Backend) -> &'static str {
+    match backend {
+        wgpu::Backend::Vulkan => "Vulkan",
+        wgpu::Backend::Metal => "Metal",
+        wgpu::Backend::Dx12 => "Direct3D 12",
+        wgpu::Backend::Gl => "OpenGL ES",
+        wgpu::Backend::BrowserWebGpu => "WebGPU",
+        wgpu::Backend::Noop => "no backend",
     }
 }
 

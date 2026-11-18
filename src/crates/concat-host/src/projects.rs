@@ -150,7 +150,8 @@ pub fn create(
     // just as safe from being clobbered as a new one.
     if is_project(&root) {
         return Err(format!(
-            "a Concat project already exists at {}",
+            "a {} project already exists at {}",
+            crate::brand::NAME,
             root.display()
         ));
     }
@@ -471,7 +472,13 @@ pub fn read_document_as_stored(path: &str) -> Result<Option<(serde_json::Value, 
     };
     serde_json::from_slice(&bytes)
         .map(|document| Some((document, bytes)))
-        .map_err(|error| format!("{} is not a Concat project: {error}", manifest.display()))
+        .map_err(|error| {
+            format!(
+                "{} is not a {} project: {error}",
+                manifest.display(),
+                crate::brand::NAME
+            )
+        })
 }
 
 /// Where the copy of the document as it was last opened lives: beside the
@@ -506,8 +513,13 @@ pub fn open(path: &str) -> Result<ProjectInfo, String> {
 
     let bytes = std::fs::read(&manifest)
         .map_err(|error| format!("could not read {}: {error}", manifest.display()))?;
-    let document: Manifest = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("{} is not a Concat project: {error}", manifest.display()))?;
+    let document: Manifest = serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "{} is not a {} project: {error}",
+            manifest.display(),
+            crate::brand::NAME
+        )
+    })?;
 
     if document.video.rate_den == 0 {
         return Err(format!("{} has an invalid frame rate", manifest.display()));

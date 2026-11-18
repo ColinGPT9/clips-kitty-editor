@@ -108,18 +108,19 @@ fn main() {
     // and without one they show Windows' generic program icon. Needs the
     // Windows SDK's rc.exe, which an MSVC toolchain has.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        let icon = "../../../assets/icons/concat.ico";
+        // Clips Kitty Editor's own icon and name; see PATCHES.md.
+        let icon = "../../../assets/icons/clips-kitty-editor.ico";
         println!("cargo:rerun-if-changed={icon}");
         // The file's name and description as Windows shows them in its
         // properties, and as code signing checks them: "Concat" in every
         // build, where the default would be the crate's lower-case name.
         winresource::WindowsResource::new()
             .set_icon(icon)
-            .set("ProductName", "Concat")
-            .set("FileDescription", "Concat")
+            .set("ProductName", "Clips Kitty Editor")
+            .set("FileDescription", "Clips Kitty Editor")
             .set(
                 "LegalCopyright",
-                "Copyright 2026 Jareer Abdullah, AGPL-3.0-or-later",
+                "Based on Concat, copyright 2026 Jareer Abdullah and Concat contributors. AGPL-3.0-or-later",
             )
             .compile()
             .expect("could not embed the Windows icon");

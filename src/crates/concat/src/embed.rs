@@ -21,16 +21,34 @@
 //! - `host.focus`: the keyboard to the editor; `host.blur`: back to the
 //!   host's window (a click on the host's page does not take it back);
 //! - `host.close`: the editor's own close (the project is saved first);
-//! - `host.info`: the editor's window, its parent and where it is.
+//! - `host.info`: the editor's window, its parent and where it is, and
+//!   whether it draws in software;
+//! - `host.state`: what the host polls: the project and whether it has
+//!   unsaved changes, a running export, the exports that ended, whether
+//!   the editor is shown, has the keyboard and draws in software;
+//! - `host.open_project {path, exportDir, exportName}`: another project,
+//!   opened as File > Open does (the open one is saved and closed first).
+//!
+//! `--export-dir` and `--export-name` (or `host.open_project`) say where
+//! the Export sheet writes and what the file is called to begin with; the
+//! sheet then shows no folder row. `--hidden` keeps the window unshown
+//! until `host.set_visible`. The host's token comes in the environment
+//! (`CONCAT_EMBED_TOKEN`) and is required: none is minted or printed, and
+//! nothing is listed in `automation.json`. Ctrl+F6 in the editor gives the
+//! keyboard back to the host.
 //!
 //! The editor's own file dialogs are owned by the host's top-level window,
 //! so they open over it and never as a window of their own on the taskbar.
 //! When the host's window goes away the editor closes itself.
 //!
 //! Without `--embed` nothing here runs and nothing changes.
+#![cfg_attr(not(windows), allow(dead_code))]
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// A rectangle in physical pixels of the host window's client area.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,16 +94,20 @@ pub struct Embed {
     /// Where the API listens for the host; loopback on a free port when
     /// not given.
     pub api: Option<SocketAddr>,
+    /// The folder the Export sheet writes into, when the host named one
+    /// (`--export-dir`): the sheet then offers no other.
+    pub export_dir: Option<PathBuf>,
+    /// The name the Export sheet starts with (`--export-name`).
+    pub export_name: Option<String>,
+    /// Not shown until the host asks (`--hidden`).
+    pub hidden: bool,
 }
 
 /// A window handle as `--embed` takes it: decimal, or hexadecimal with
 /// `0x`. Zero is no window.
 pub fn parse_window(text: &str) -> Option<isize> {
     let text = text.trim();
-    let value = match text
-        .strip_prefix("0x")
-        .or_else(|| text.strip_prefix("0X"))
-    {
+    let value = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
         Some(hex) => u64::from_str_radix(hex, 16).ok()?,
         None => text.parse::<u64>().ok()?,
     };
@@ -112,8 +134,9 @@ pub fn api_address() -> SocketAddr {
         .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 0)))
 }
 
-/// The token the host gave in `CONCAT_EMBED_TOKEN`, if it gave one; the
-/// server mints one otherwise and [`announce`] says it.
+/// The token the host gave in `CONCAT_EMBED_TOKEN`. Required: [`set`]
+/// refuses to start without one that is long enough, so none is ever
+/// minted or said aloud while embedded.
 pub fn token() -> Option<String> {
     std::env::var("CONCAT_EMBED_TOKEN")
         .ok()
@@ -122,26 +145,41 @@ pub fn token() -> Option<String> {
 }
 
 /// Says where the host's API is, on standard output, as one JSON line:
-/// what a host that did not choose the port or the token reads. A host
-/// that started the editor with no pipe there loses nothing but this.
-pub fn announce(address: Option<SocketAddr>, token: &str) {
+/// what a host that did not choose the port reads. Never the token: that
+/// stays between the host and the editor's environment. A host that
+/// started the editor with no pipe there loses nothing but this.
+pub fn announce(address: Option<SocketAddr>) {
     use std::io::Write;
-    let mut line = serde_json::json!({
+    let line = serde_json::json!({
         "embed": "ready",
         "api": address.map(|address| address.to_string()),
         "pid": std::process::id(),
     });
-    if self::token().is_none() {
-        line["token"] = serde_json::Value::String(token.to_owned());
-    }
     let mut out = std::io::stdout();
     let _ = writeln!(out, "{line}");
     let _ = out.flush();
 }
 
-/// Records `--embed` for the run. Refused off Windows, and when the
-/// window named is not one.
+/// Records `--embed` for the run. Refused off Windows, when the window
+/// named is not one, without the host's token in the environment, and
+/// for an API address that is not this machine's own.
 pub fn set(embed: Embed) -> Result<(), String> {
+    match token() {
+        None => {
+            return Err(
+                "--embed needs the host's token in CONCAT_EMBED_TOKEN; none was given".to_owned(),
+            );
+        }
+        Some(token) => concat_server::check_token(&token)
+            .map_err(|why| format!("CONCAT_EMBED_TOKEN will not do: {why}"))?,
+    }
+    if let Some(address) = embed.api
+        && !address.ip().is_loopback()
+    {
+        return Err(format!(
+            "--api {address} is not this machine's own address; an embedded editor listens on loopback only"
+        ));
+    }
     #[cfg(windows)]
     {
         // SAFETY: IsWindow takes any value and says whether it is a window.
@@ -153,6 +191,15 @@ pub fn set(embed: Embed) -> Result<(), String> {
         }
         if let Some(bounds) = embed.bounds {
             imp::set_bounds(bounds);
+        }
+        if embed.hidden {
+            imp::start_hidden();
+        }
+        if let Some(folder) = &embed.export_dir {
+            set_export_target(
+                folder.to_string_lossy().into_owned(),
+                embed.export_name.clone(),
+            );
         }
         let parent = embed.parent;
         EMBED
@@ -176,11 +223,29 @@ pub fn set(embed: Embed) -> Result<(), String> {
 pub fn window_attributes(
     attributes: slint::winit_030::winit::window::WindowAttributes,
 ) -> slint::winit_030::winit::window::WindowAttributes {
+    use slint::winit_030::winit::dpi::{PhysicalPosition, PhysicalSize};
     use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
     use slint::winit_030::winit::raw_window_handle::{RawWindowHandle, Win32WindowHandle};
-    let attributes = attributes
+    // Not resizable: the host sizes it, and a child wants no sizing frame.
+    let mut attributes = attributes
         .with_decorations(false)
-        .with_undecorated_shadow(false);
+        .with_undecorated_shadow(false)
+        .with_resizable(false);
+    // Made where the host wants it and at that size, so it is never seen
+    // anywhere else; or, for a start that shows nothing until asked
+    // (`--hidden`), far outside the host's window, where a child is not
+    // drawn, until `attach` has hidden it.
+    if let Some(bounds) = imp::bounds() {
+        attributes = attributes
+            .with_inner_size(PhysicalSize::new(
+                bounds.width.max(1) as u32,
+                bounds.height.max(1) as u32,
+            ))
+            .with_position(PhysicalPosition::new(bounds.x, bounds.y));
+    }
+    if !imp::wants_visible() {
+        attributes = attributes.with_position(PhysicalPosition::new(-32000, -32000));
+    }
     let Some(parent) = EMBED
         .get()
         .and_then(|embed| std::num::NonZeroIsize::new(embed.parent))
@@ -201,6 +266,11 @@ pub fn attach(window: &slint::winit_030::winit::window::Window) {
     #[cfg(windows)]
     {
         use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        // Not resizable, as far as winit knows: the host sizes it, and
+        // winit then leaves the sizing frame (WS_THICKFRAME) off whenever
+        // it writes the window's style again, and the window's edges are
+        // no place to start a resize drag from (platform.rs).
+        window.set_resizable(false);
         if let Ok(handle) = window.window_handle()
             && let RawWindowHandle::Win32(handle) = handle.as_raw()
         {
@@ -228,6 +298,29 @@ pub fn resized(width: u32, height: u32) {
 pub fn pressed() {
     #[cfg(windows)]
     imp::take_focus_after_press();
+}
+
+/// The editor's window got the keyboard, or lost it: said in the log with
+/// what has it now, which is what a key that "was dropped" is traced by.
+pub fn focus_changed(focused: bool) {
+    #[cfg(windows)]
+    imp::focus_changed(focused);
+    #[cfg(not(windows))]
+    let _ = focused;
+}
+
+/// F6 was pressed in the editor: with Ctrl held, the keyboard goes back to
+/// the host's window - the way out of the editor for someone who uses no
+/// pointer - and the key is spent. Whether it was.
+pub fn leaves_on_f6() -> bool {
+    #[cfg(windows)]
+    {
+        imp::leaves_on_f6()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// The host's top-level window, as the owner of the editor's dialogs, so
@@ -275,6 +368,314 @@ impl slint::winit_030::winit::raw_window_handle::HasDisplayHandle for DialogOwne
     }
 }
 
+/// The version of the `host.*` methods: 2 since `host.state` and
+/// `host.open_project`.
+pub const HOST_API: u32 = 2;
+
+/// How many ended exports `host.state` keeps.
+const EXPORTS_KEPT: usize = 20;
+
+/// Where the host wants exports written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExportTarget {
+    /// The folder.
+    dir: String,
+    /// The name the sheet starts with, until the sheet has taken it.
+    name: Option<String>,
+}
+
+/// What the window last said about itself, for `host.state`: written on
+/// the event loop's thread each time the window publishes
+/// (studio/publish.rs), read on the API's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Seen {
+    /// The open project's folder and name; `None` on the empty screen.
+    pub project: Option<(String, String)>,
+    /// An edit is not on disk yet: made, with its autosave still to run.
+    pub dirty: bool,
+    /// The Export sheet is rendering.
+    pub exporting: bool,
+    /// How far that render is, `0..=1`.
+    pub fraction: f32,
+    /// What it is doing, as the sheet says it.
+    pub stage: String,
+}
+
+/// One export of the window's that ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Ended {
+    seq: u64,
+    state: &'static str,
+    project: String,
+    output: String,
+    width: u32,
+    height: u32,
+    error: String,
+}
+
+/// Everything `host.state` says that is not the window's own to read.
+#[derive(Default)]
+struct Told {
+    /// The project's folder as the host spelled it, so the host can match
+    /// what it is told against what it asked for, letter for letter.
+    given: Option<String>,
+    target: Option<ExportTarget>,
+    seen: Seen,
+    ended: VecDeque<Ended>,
+    seq: u64,
+}
+
+fn told() -> MutexGuard<'static, Told> {
+    static TOLD: OnceLock<Mutex<Told>> = OnceLock::new();
+    TOLD.get_or_init(|| Mutex::new(Told::default()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Saves that have been handed to a worker and have not come back.
+static SAVES: AtomicU32 = AtomicU32::new(0);
+
+/// A save was handed to a worker (studio/edit.rs).
+pub fn save_began() {
+    SAVES.fetch_add(1, Ordering::SeqCst);
+}
+
+/// That save came back, written or not.
+pub fn save_ended() {
+    let _ = SAVES.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |held| {
+        Some(held.saturating_sub(1))
+    });
+}
+
+/// The project this run was started on, as the host spelled it.
+pub fn set_project(path: Option<&Path>) {
+    told().given = path.map(|path| path.to_string_lossy().into_owned());
+}
+
+fn set_export_target(dir: String, name: Option<String>) {
+    told().target = Some(ExportTarget {
+        dir,
+        name: name.filter(|name| !name.trim().is_empty()),
+    });
+}
+
+/// Whether the host named the folder exports go to: the Export sheet then
+/// shows no folder row, no Browse and no "Show in folder".
+pub fn export_fixed() -> bool {
+    told().target.is_some()
+}
+
+/// The folder the Export sheet writes into, and - the first time it is
+/// asked after the host named one - the name it starts with. `None` when
+/// the host named no folder.
+pub fn export_target() -> Option<(String, Option<String>)> {
+    let mut told = told();
+    let target = told.target.as_mut()?;
+    Some((target.dir.clone(), target.name.take()))
+}
+
+/// The window says where it is; see [`Seen`].
+pub fn tell(seen: Seen) {
+    let mut told = told();
+    if told.seen != seen {
+        told.seen = seen;
+    }
+}
+
+/// A folder's spelling with one kind of separator, none at its end, and
+/// no capitals: how two spellings are compared when the folder itself
+/// cannot be asked.
+fn plain(text: &str) -> String {
+    let separator = std::path::MAIN_SEPARATOR;
+    text.replace(['/', separator], "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+/// Whether two spellings name one folder.
+fn same_folder(one: &str, other: &str) -> bool {
+    if one == other {
+        return true;
+    }
+    match (std::fs::canonicalize(one), std::fs::canonicalize(other)) {
+        (Ok(one), Ok(other)) => one == other,
+        _ => plain(one) == plain(other),
+    }
+}
+
+/// `path` as the host spelled it, when it is the folder the host named.
+fn as_given(given: Option<&str>, path: &str) -> String {
+    match given {
+        Some(given) if same_folder(given, path) => given.to_owned(),
+        _ => path.to_owned(),
+    }
+}
+
+/// An export of the window's ended: `state` is `done` (the file is
+/// complete under its final name), `failed` or `cancelled` (no file under
+/// that name was finished). Called by the Export sheet (panes/export.rs).
+pub fn export_ended(
+    state: &'static str,
+    project: &str,
+    output: &str,
+    (width, height): (u32, u32),
+    error: &str,
+) {
+    let mut told = told();
+    told.seq += 1;
+    let project = as_given(told.given.as_deref(), project);
+    let ended = Ended {
+        seq: told.seq,
+        state,
+        project,
+        output: output.replace('/', std::path::MAIN_SEPARATOR_STR),
+        width,
+        height,
+        error: error.to_owned(),
+    };
+    log::info!(
+        "embed: export {} ended, {state}: {}",
+        ended.seq,
+        ended.output
+    );
+    told.ended.push_back(ended);
+    while told.ended.len() > EXPORTS_KEPT {
+        told.ended.pop_front();
+    }
+}
+
+/// What `host.state` answers; `visible` and `focused` are the window's,
+/// and the three after them say what it draws on.
+fn state(
+    visible: bool,
+    focused: bool,
+    (software, adapter, backend): (bool, String, String),
+) -> serde_json::Value {
+    use serde_json::json;
+    let told = told();
+    let saving = SAVES.load(Ordering::SeqCst) > 0;
+    json!({
+        "hostApi": HOST_API,
+        "version": env!("CARGO_PKG_VERSION"),
+        "pid": std::process::id(),
+        "visible": visible,
+        "focused": focused,
+        "graphics": {
+            "software": software,
+            "adapter": adapter,
+            "backend": backend,
+        },
+        "project": told.seen.project.as_ref().map(|(path, name)| json!({
+            "path": as_given(told.given.as_deref(), path),
+            "name": name,
+            "dirty": told.seen.dirty || saving,
+        })),
+        "export": {
+            "running": told.seen.exporting,
+            "fraction": if told.seen.exporting { told.seen.fraction } else { 0.0 },
+            "stage": if told.seen.exporting { told.seen.stage.as_str() } else { "" },
+        },
+        "exports": told.ended.iter().map(|ended| json!({
+            "seq": ended.seq,
+            "state": ended.state,
+            "project": ended.project,
+            "output": ended.output,
+            "width": ended.width,
+            "height": ended.height,
+            "error": ended.error,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// What a caller is refused with while an export runs.
+const BUSY: &str = "busy: an export is running; open another project when it has finished";
+
+/// `host.open_project`: the project in the folder `path`, opened the way
+/// File > Open opens one - the open project is saved and closed first -
+/// with the Export sheet pointed at `exportDir` and named `exportName`.
+/// Answers once the project is on screen. Refused with a sentence that
+/// starts `busy:` while an export runs; refused, with the open project
+/// left open, for a folder that will not read or that another process
+/// holds.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn open_project(params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = |key: &str| {
+        params
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    let path = text("path").ok_or_else(|| "path is the project's folder".to_owned())?;
+    let export_dir = text("exportDir");
+    let export_name = text("exportName");
+    if told().seen.exporting {
+        return Err(BUSY.to_owned());
+    }
+    let (answer, answered) = std::sync::mpsc::channel::<Result<(), String>>();
+    let given = path.clone();
+    crate::host::on_ui(move |studio, _, _| {
+        let _ = answer.send(switch_project(studio, &given));
+    });
+    match answered.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(Ok(())) => {
+            told().given = Some(path);
+            if let Some(dir) = export_dir {
+                set_export_target(dir, export_name);
+            }
+            Ok(serde_json::json!({}))
+        }
+        Ok(Err(why)) => Err(why),
+        Err(_) => {
+            Err("the editor did not answer in time; the project may still be opening".to_owned())
+        }
+    }
+}
+
+/// [`open_project`], on the event loop's thread.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn switch_project(studio: &mut crate::studio::Studio, path: &str) -> Result<(), String> {
+    if studio.export.phase == crate::ui::ExportPhase::Running {
+        return Err(BUSY.to_owned());
+    }
+    let folder = std::path::absolute(path).map_err(|error| format!("{path}: {error}"))?;
+    let folder = folder
+        .to_str()
+        .ok_or_else(|| "the project's folder is not valid Unicode".to_owned())?
+        .to_owned();
+    // Read and checked before the open project is touched: a folder that
+    // is no project, or one another process holds, leaves it as it was.
+    concat_host::projects::open(&folder)?;
+    if let Some(owner) = concat_host::lock::ProjectLock::holder(Path::new(&folder)) {
+        let pid = owner
+            .pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "?".to_owned());
+        return Err(crate::i18n::tf("studio.projectOpenElsewhere", &[&pid]));
+    }
+    let before = studio
+        .session
+        .as_ref()
+        .map(|session| session.path().to_owned());
+    match studio.open_project_at(&folder) {
+        Ok(()) => Ok(()),
+        Err(why) => {
+            // The open project was closed for this one, which then would
+            // not open after all: back to the one that was open.
+            if studio.session.is_none()
+                && let Some(before) = before
+                && let Err(again) = studio.open_project_at(&before)
+            {
+                log::error!(
+                    "embed: {folder} did not open ({why}), and the project that was open would not open again: {again}"
+                );
+            }
+            Err(why)
+        }
+    }
+}
+
 /// The host's own methods on the API, `host.*`, answered here rather than
 /// by the API. See the module's documentation.
 pub fn host_methods() -> concat_server::HostMethods {
@@ -286,7 +687,9 @@ pub fn host_methods() -> concat_server::HostMethods {
         #[cfg(not(windows))]
         {
             let _ = params;
-            Err(format!("{method} is only for an embedded editor on Windows"))
+            Err(format!(
+                "{method} is only for an embedded editor on Windows"
+            ))
         }
     })
 }
@@ -313,6 +716,28 @@ mod win {
         pub y: i32,
     }
 
+    /// What a thread's windows are doing: which has the keyboard.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct GUITHREADINFO {
+        pub size: u32,
+        pub flags: u32,
+        pub active: HWND,
+        pub focus: HWND,
+        pub capture: HWND,
+        pub menu_owner: HWND,
+        pub move_size: HWND,
+        pub caret: HWND,
+        pub caret_rect: RECT,
+    }
+
+    pub const GWL_STYLE: i32 = -16;
+    pub const WS_THICKFRAME: isize = 0x0004_0000;
+    pub const WS_MAXIMIZEBOX: isize = 0x0001_0000;
+    pub const SW_HIDE: i32 = 0;
+    pub const VK_CONTROL: i32 = 0x11;
+    pub const SWP_NOZORDER: u32 = 0x0004;
+    pub const SWP_FRAMECHANGED: u32 = 0x0020;
     pub const GA_PARENT: u32 = 1;
     pub const GA_ROOT: u32 = 2;
     pub const HWND_TOP: HWND = 0;
@@ -343,6 +768,12 @@ mod win {
         pub fn ScreenToClient(hwnd: HWND, point: *mut POINT) -> i32;
         pub fn GetCursorPos(point: *mut POINT) -> i32;
         pub fn WindowFromPoint(point: POINT) -> HWND;
+        pub fn GetWindowLongPtrW(hwnd: HWND, index: i32) -> isize;
+        pub fn SetWindowLongPtrW(hwnd: HWND, index: i32, value: isize) -> isize;
+        pub fn ShowWindow(hwnd: HWND, command: i32) -> i32;
+        pub fn GetKeyState(key: i32) -> i16;
+        pub fn GetWindowThreadProcessId(hwnd: HWND, process: *mut u32) -> u32;
+        pub fn GetGUIThreadInfo(thread: u32, info: *mut GUITHREADINFO) -> i32;
     }
 }
 
@@ -372,8 +803,91 @@ mod imp {
         }
     }
 
-    fn bounds() -> Option<Bounds> {
+    /// `--hidden`: not shown until the host asks.
+    pub fn start_hidden() {
+        VISIBLE.store(false, Ordering::SeqCst);
+    }
+
+    /// Takes the sizing frame off the window, when it has one: Slint asks
+    /// for a resizable window, and a child the host sizes wants no frame
+    /// of its own to be dragged by or measured with. On the event loop's
+    /// thread.
+    fn strip_frame(child: isize) {
+        // SAFETY: plain Win32 calls on this thread's own window.
+        unsafe {
+            let style = win::GetWindowLongPtrW(child, win::GWL_STYLE);
+            let wanted = style & !(win::WS_THICKFRAME | win::WS_MAXIMIZEBOX);
+            if wanted != style {
+                win::SetWindowLongPtrW(child, win::GWL_STYLE, wanted);
+                win::SetWindowPos(
+                    child,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    win::SWP_NOMOVE
+                        | win::SWP_NOSIZE
+                        | win::SWP_NOZORDER
+                        | win::SWP_NOACTIVATE
+                        | win::SWP_FRAMECHANGED,
+                );
+            }
+        }
+    }
+
+    /// Whether the editor's window, or something in it, has the keyboard:
+    /// asked of the window's own thread, from any thread.
+    fn has_focus(child: isize) -> bool {
+        if child == 0 {
+            return false;
+        }
+        let mut info = win::GUITHREADINFO {
+            size: std::mem::size_of::<win::GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: plain Win32 reads; the struct says its own size.
+        unsafe {
+            let thread = win::GetWindowThreadProcessId(child, std::ptr::null_mut());
+            thread != 0
+                && win::GetGUIThreadInfo(thread, &mut info) != 0
+                && info.focus != 0
+                && (info.focus == child || win::IsChild(child, info.focus) != 0)
+        }
+    }
+
+    pub fn focus_changed(focused: bool) {
+        if focused {
+            log::debug!("embed: the editor has the keyboard");
+            return;
+        }
+        // SAFETY: plain Win32 reads on the event loop's thread.
+        let (now, foreground) = unsafe { (win::GetFocus(), win::GetForegroundWindow()) };
+        let child = CHILD.load(Ordering::SeqCst);
+        // SAFETY: GetAncestor takes any value.
+        let root = unsafe { win::GetAncestor(child, win::GA_ROOT) };
+        log::debug!(
+            "embed: the editor lost the keyboard to window {now:#x} (the host's is {root:#x}, the foreground window {foreground:#x})"
+        );
+    }
+
+    pub fn leaves_on_f6() -> bool {
+        // SAFETY: GetKeyState reads this thread's own key state.
+        let control = unsafe { win::GetKeyState(win::VK_CONTROL) } < 0;
+        if control {
+            log::info!("embed: Ctrl+F6, the keyboard goes back to the host");
+            give_focus_back();
+        }
+        control
+    }
+
+    pub fn bounds() -> Option<Bounds> {
         BOUNDS.lock().ok().and_then(|held| *held)
+    }
+
+    /// Whether the host wants the editor shown.
+    pub fn wants_visible() -> bool {
+        VISIBLE.load(Ordering::SeqCst)
     }
 
     /// Puts the window where the host wants it, on top of the host's other
@@ -414,6 +928,14 @@ mod imp {
 
     pub fn attach(hwnd: isize) {
         let first = CHILD.swap(hwnd, Ordering::SeqCst) == 0;
+        strip_frame(hwnd);
+        if first && !VISIBLE.load(Ordering::SeqCst) {
+            // `--hidden`: off the screen before its first frame is, and
+            // winit is told the same below so its idea of the window stays
+            // the window's.
+            // SAFETY: ShowWindow on this thread's own window.
+            unsafe { win::ShowWindow(hwnd, win::SW_HIDE) };
+        }
         if first {
             let parent = EMBED.get().map(|embed| embed.parent).unwrap_or_default();
             // SAFETY: GetAncestor takes any value.
@@ -429,6 +951,7 @@ mod imp {
     }
 
     pub fn resized(width: u32, height: u32) {
+        keep_frameless();
         let Some(bounds) = bounds() else {
             return;
         };
@@ -447,6 +970,15 @@ mod imp {
         }
     }
 
+    /// [`strip_frame`] on the editor's window, after anything that may
+    /// have written its style again: a resize, a show.
+    pub fn keep_frameless() {
+        let child = CHILD.load(Ordering::SeqCst);
+        if child != 0 {
+            strip_frame(child);
+        }
+    }
+
     /// Shows or hides the window, through winit so its idea of the window
     /// stays the window's. On the event loop's thread.
     fn apply_visible(visible: bool) {
@@ -460,6 +992,7 @@ mod imp {
                     window.set_visible(visible);
                 });
             });
+            keep_frameless();
             if visible {
                 place();
             }
@@ -626,10 +1159,19 @@ mod imp {
                 placed,
             )
         };
+        // SAFETY: a plain Win32 read of the window's style.
+        let style = if child != 0 {
+            unsafe { win::GetWindowLongPtrW(child, win::GWL_STYLE) }
+        } else {
+            0
+        };
         json!({
             "hwnd": child,
             "parent": parent,
             "actualParent": actual_parent,
+            "software": crate::gpu::graphics().0,
+            "focused": has_focus(child),
+            "style": style,
             "visible": visible,
             "wantVisible": VISIBLE.load(Ordering::SeqCst),
             "bounds": placed.then(|| json!({
@@ -658,7 +1200,7 @@ mod imp {
                 };
                 if bounds.width < 1 || bounds.height < 1 {
                     return Err(
-                        "width and height are at least 1; hide the editor instead".to_owned(),
+                        "width and height are at least 1; hide the editor instead".to_owned()
                     );
                 }
                 set_bounds(bounds);
@@ -690,8 +1232,19 @@ mod imp {
                 Ok(json!({}))
             }
             "host.info" => Ok(info()),
+            "host.state" => {
+                let child = CHILD.load(Ordering::SeqCst);
+                // SAFETY: a plain Win32 read of window state.
+                let visible = child != 0 && unsafe { win::IsWindowVisible(child) } != 0;
+                Ok(super::state(
+                    visible,
+                    has_focus(child),
+                    crate::gpu::graphics(),
+                ))
+            }
+            "host.open_project" => super::open_project(params),
             other => Err(format!(
-                "{other} is not a host method: host.set_bounds, host.set_visible, host.focus, host.blur, host.close or host.info"
+                "{other} is not a host method: host.set_bounds, host.set_visible, host.focus, host.blur, host.close, host.info, host.state or host.open_project"
             )),
         }
     }
@@ -710,6 +1263,134 @@ mod tests {
         assert_eq!(parse_window("0x"), None);
         assert_eq!(parse_window("-5"), None);
         assert_eq!(parse_window("window"), None);
+    }
+
+    /// `host.state` always has every key, `project` null on the empty
+    /// screen; an ended export is listed once, numbered from 1, oldest
+    /// first, and only the last twenty are kept. One test, because what
+    /// it reads is the process's.
+    #[test]
+    fn the_state_a_host_polls_has_every_key_and_numbers_its_exports() {
+        let graphics = || (false, "A GPU".to_owned(), "Direct3D 12".to_owned());
+        let empty = state(false, false, graphics());
+        for key in [
+            "hostApi", "version", "pid", "visible", "focused", "graphics", "project", "export",
+            "exports",
+        ] {
+            assert!(empty.get(key).is_some(), "{key} is missing");
+        }
+        assert_eq!(empty["hostApi"], 2);
+        assert!(empty["project"].is_null());
+        assert_eq!(empty["export"]["running"], false);
+        assert_eq!(empty["export"]["fraction"], 0.0);
+        assert_eq!(empty["export"]["stage"], "");
+        assert_eq!(empty["graphics"]["software"], false);
+        assert_eq!(empty["graphics"]["backend"], "Direct3D 12");
+        assert_eq!(empty["exports"].as_array().map(Vec::len), Some(0));
+
+        set_project(Some(Path::new("Projects/My clip")));
+        tell(Seen {
+            project: Some(("Projects/My clip".to_owned(), "My clip".to_owned())),
+            dirty: true,
+            exporting: true,
+            fraction: 0.5,
+            stage: "Rendering video".to_owned(),
+        });
+        let busy = state(true, true, graphics());
+        assert_eq!(busy["project"]["path"], "Projects/My clip");
+        assert_eq!(busy["project"]["name"], "My clip");
+        assert_eq!(busy["project"]["dirty"], true);
+        assert_eq!(busy["export"]["running"], true);
+        assert_eq!(busy["export"]["fraction"], 0.5);
+        assert_eq!(busy["visible"], true);
+        assert_eq!(busy["focused"], true);
+
+        // A save in flight keeps the project dirty after the edit's flag
+        // has gone.
+        tell(Seen {
+            project: Some(("Projects/My clip".to_owned(), "My clip".to_owned())),
+            ..Seen::default()
+        });
+        save_began();
+        assert_eq!(state(true, true, graphics())["project"]["dirty"], true);
+        save_ended();
+        assert_eq!(state(true, true, graphics())["project"]["dirty"], false);
+        save_ended();
+        assert_eq!(state(true, true, graphics())["project"]["dirty"], false);
+
+        export_ended(
+            "done",
+            "Projects/My clip",
+            "out/My clip.mp4",
+            (1080, 1920),
+            "",
+        );
+        export_ended(
+            "cancelled",
+            "Projects/My clip",
+            "out/My clip.mp4",
+            (1080, 1920),
+            "",
+        );
+        export_ended(
+            "failed",
+            "Projects/Other",
+            "out/x.mp4",
+            (1920, 1080),
+            "the disk is full",
+        );
+        let after = state(true, false, graphics());
+        let exports = after["exports"].as_array().expect("a list");
+        assert_eq!(exports.len(), 3);
+        assert_eq!(exports[0]["seq"], 1);
+        assert_eq!(exports[0]["state"], "done");
+        assert_eq!(exports[0]["project"], "Projects/My clip");
+        assert_eq!(exports[0]["width"], 1080);
+        assert_eq!(exports[0]["height"], 1920);
+        assert_eq!(exports[1]["state"], "cancelled");
+        assert_eq!(exports[2]["seq"], 3);
+        assert_eq!(exports[2]["error"], "the disk is full");
+        for key in [
+            "seq", "state", "project", "output", "width", "height", "error",
+        ] {
+            assert!(exports[0].get(key).is_some(), "{key} is missing");
+        }
+        for _ in 0..30 {
+            export_ended(
+                "done",
+                "Projects/My clip",
+                "out/again.mp4",
+                (1080, 1920),
+                "",
+            );
+        }
+        let later = state(true, false, graphics());
+        let exports = later["exports"].as_array().expect("a list");
+        assert_eq!(exports.len(), EXPORTS_KEPT);
+        assert_eq!(exports[EXPORTS_KEPT - 1]["seq"], 33);
+        assert_eq!(exports[0]["seq"], 33 - EXPORTS_KEPT as u64 + 1);
+
+        // The folder the host names is where the sheet writes, and its
+        // name is handed over once.
+        assert_eq!(export_target(), None);
+        assert!(!export_fixed());
+        set_export_target("out".to_owned(), Some("My clip".to_owned()));
+        assert!(export_fixed());
+        assert_eq!(
+            export_target(),
+            Some(("out".to_owned(), Some("My clip".to_owned())))
+        );
+        assert_eq!(export_target(), Some(("out".to_owned(), None)));
+    }
+
+    #[test]
+    fn two_spellings_of_a_folder_are_one_folder() {
+        assert!(same_folder("Projects/My clip", "Projects/My clip"));
+        assert!(same_folder("Projects/My clip/", "projects/my clip"));
+        assert!(!same_folder("Projects/My clip", "Projects/Other"));
+        assert_eq!(as_given(Some("P/One"), "p/one/"), "P/One");
+        assert_eq!(as_given(Some("P/One"), "P/Two"), "P/Two");
+        assert_eq!(as_given(None, "P/Two"), "P/Two");
     }
 
     #[test]

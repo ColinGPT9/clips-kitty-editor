@@ -29,7 +29,27 @@ impl Studio {
 
     // ── publishing ──
 
+    /// Tells an embedding host's `host.state` where the window is: the
+    /// project, whether an edit is still to be saved, the export. Each
+    /// time the window publishes; nothing when not embedded.
+    fn tell_host(&self) {
+        if !crate::embed::active() {
+            return;
+        }
+        crate::embed::tell(crate::embed::Seen {
+            project: self
+                .session
+                .as_ref()
+                .map(|session| (session.path().to_owned(), self.project_name.clone())),
+            dirty: self.dirty || self.autosave.running(),
+            exporting: self.export.phase == crate::ui::ExportPhase::Running,
+            fraction: self.export.progress,
+            stage: self.export.stage.clone(),
+        });
+    }
+
     pub fn publish(&self, app: &App, models: &Models) {
+        self.tell_host();
         // The tray's three menu labels and the tooltips' bare-letter
         // hints, spelled from the keymap so a rebind moves the words
         // with the key. An action left unbound shows an em dash rather
@@ -61,6 +81,7 @@ impl Studio {
     /// save changes. The autosave publishes only this - a whole publish a
     /// second and a half after every edit was all cost (#622).
     pub fn publish_status(&self, app: &App) {
+        self.tell_host();
         app.set_project_status(
             if self.dirty {
                 "unsaved changes"

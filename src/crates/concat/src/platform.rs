@@ -292,6 +292,22 @@ impl CustomApplicationHandler for DropHandler {
             self.wayland_tried = true;
             self.wayland = listen_for_wayland_drops(window, &self.arrived);
         }
+        // Embedded in a host's window: who has the keyboard is said in the
+        // log, and Ctrl+F6 hands it back to the host. See embed.rs.
+        if crate::embed::active() {
+            use slint::winit_030::winit::keyboard::{Key, NamedKey};
+            match event {
+                WindowEvent::Focused(focused) => crate::embed::focus_changed(*focused),
+                WindowEvent::KeyboardInput { event: key, .. }
+                    if key.state == ElementState::Pressed
+                        && key.logical_key == Key::Named(NamedKey::F6)
+                        && crate::embed::leaves_on_f6() =>
+                {
+                    return EventResult::PreventDefault;
+                }
+                _ => {}
+            }
+        }
         match event {
             WindowEvent::ScaleFactorChanged { .. } => reapply_ui_scale(std::time::Duration::ZERO),
             WindowEvent::Resized(size) if crate::embed::active() => {
@@ -588,7 +604,8 @@ pub fn select_backend(
 pub fn report_startup_failure(error: &str) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let mut description = format!("Concat could not start.\n\n{error}");
+        let name = concat_host::brand::NAME;
+        let mut description = format!("{name} could not start.\n\n{error}");
         if let Some(path) = concat_host::logs::current() {
             description.push_str(&format!("\n\nLog: {}", path.display()));
         }
@@ -600,7 +617,7 @@ pub fn report_startup_failure(error: &str) {
         }
         dialog
             .set_level(rfd::MessageLevel::Error)
-            .set_title("Concat")
+            .set_title(concat_host::brand::NAME)
             .set_description(description)
             .set_buttons(rfd::MessageButtons::Ok)
             .show();

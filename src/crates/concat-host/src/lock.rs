@@ -69,8 +69,8 @@ impl std::fmt::Display for LockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LockError::Held(owner) => match owner.pid {
-                Some(pid) => write!(f, "open in another Concat (process {pid})"),
-                None => f.write_str("open in another Concat"),
+                Some(pid) => write!(f, "open in another {} (process {pid})", crate::brand::NAME),
+                None => write!(f, "open in another {}", crate::brand::NAME),
             },
             LockError::Io(why) => f.write_str(why),
         }
