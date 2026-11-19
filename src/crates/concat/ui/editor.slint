@@ -336,6 +336,11 @@ export global Editor {
     in-out property <[TimelineTabData]> timeline-tabs;
     in-out property <int> timeline-current-tab;
     in-out property <[TrackData]> tracks;
+    /// Embedded only (embed.rs): the top lane with something on it, -1
+    /// for none, and how many projects have opened. The timeline pane
+    /// shows that lane at its top once per opening.
+    in property <int> timeline-first-row: -1;
+    in property <int> timeline-open-seq: 0;
     in-out property <[ClipData]> clips;
     in-out property <TimelineTool> tool;
     in-out property <bool> snap;

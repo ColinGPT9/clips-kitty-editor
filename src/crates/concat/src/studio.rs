@@ -3050,11 +3050,22 @@ impl Studio {
         let prefs = Preferences::load(&host.dirs);
         // The panels where the last session left them, while Settings says
         // to; a saved dock this build cannot read is the default instead.
-        let saved = prefs.layout.as_ref().filter(|_| prefs.remembers_layout());
+        // Embedded, the panels start as embed::embedded_dock arranges them
+        // each time: a host's area is not a window's size to come back to.
+        let saved = prefs
+            .layout
+            .as_ref()
+            .filter(|_| prefs.remembers_layout() && !crate::embed::active());
         let dock = saved
             .and_then(|layout| layout.wide.as_ref())
             .and_then(Dock::from_saved)
-            .unwrap_or_else(default_dock);
+            .unwrap_or_else(|| {
+                if crate::embed::active() {
+                    crate::embed::embedded_dock()
+                } else {
+                    default_dock()
+                }
+            });
         let dock_aside = saved
             .and_then(|layout| layout.compact.as_ref())
             .and_then(Dock::from_saved)

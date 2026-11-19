@@ -639,6 +639,7 @@ impl ExportPane {
         ExportData {
             open: self.open,
             fixed_folder: crate::embed::export_fixed(),
+            destination: crate::embed::export_note().into(),
             name: self.name.as_str().into(),
             // Where the file ends up: on a phone, the folder its gallery
             // shows, not the app's own that the export writes into.

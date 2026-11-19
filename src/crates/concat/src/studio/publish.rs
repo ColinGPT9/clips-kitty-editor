@@ -117,7 +117,7 @@ impl Studio {
     /// Saves the layout a moment after the last change: a gutter drag or a
     /// window resize arrives as a stream, and the file is written once.
     pub fn remember_layout_soon(&self) {
-        if !self.prefs.remembers_layout() || self.meters.phone {
+        if !self.prefs.remembers_layout() || self.meters.phone || crate::embed::active() {
             return;
         }
         self.layout_timer.start(
@@ -136,7 +136,7 @@ impl Studio {
     /// shell has no dock to keep.
     pub fn save_layout(&mut self, window: &slint::Window) {
         self.layout_timer.stop();
-        if !self.prefs.remembers_layout() || self.meters.phone {
+        if !self.prefs.remembers_layout() || self.meters.phone || crate::embed::active() {
             return;
         }
         let (wide, compact) = if self.compact {
@@ -263,6 +263,20 @@ impl Studio {
                 })
                 .collect(),
         );
+
+        // Embedded: the top lane with something on it, for the pane to
+        // scroll to once each time a project opens (embed::opened).
+        if crate::embed::active() {
+            let first = timeline
+                .clips
+                .iter()
+                .map(|clip| self.row_of(&clip.track_id))
+                .filter(|row| *row >= 0)
+                .min()
+                .unwrap_or(-1);
+            editor.set_timeline_first_row(first);
+            editor.set_timeline_open_seq(crate::embed::opened());
+        }
 
         // Only the clips near the view: what the lanes show plus a screen
         // either side; see `TimelinePane::published_span`.

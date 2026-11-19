@@ -930,6 +930,11 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
         // for the window to widen again; every dock operation works on
         // whichever is showing.
         state.set_compact(width < studio::COMPACT_WIDTH);
+        // Embedded in a host's page, which is narrower than a window of
+        // its own: the library and the inspector keep room for their tabs.
+        if embed::active() && !state.compact {
+            embed::fit_sides(&mut state.dock, width, height);
+        }
     }));
     editor.on_dock_set(on_dock!(|state, seat: i32, kind: PaneKind| {
         let Some(path) = state.dock.leaf_path(seat.max(0) as usize) else {

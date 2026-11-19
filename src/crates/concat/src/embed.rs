@@ -26,12 +26,14 @@
 //! - `host.state`: what the host polls: the project and whether it has
 //!   unsaved changes, a running export, the exports that ended, whether
 //!   the editor is shown, has the keyboard and draws in software;
-//! - `host.open_project {path, exportDir, exportName}`: another project,
-//!   opened as File > Open does (the open one is saved and closed first).
+//! - `host.open_project {path, exportDir, exportName, destination}`:
+//!   another project, opened as File > Open does (the open one is saved
+//!   and closed first).
 //!
 //! `--export-dir` and `--export-name` (or `host.open_project`) say where
 //! the Export sheet writes and what the file is called to begin with; the
-//! sheet then shows no folder row. `--hidden` keeps the window unshown
+//! sheet then shows no folder row, and `--export-note` (`destination`)
+//! is the line it shows there instead: where the host puts the file. `--hidden` keeps the window unshown
 //! until `host.set_visible`. The host's token comes in the environment
 //! (`CONCAT_EMBED_TOKEN`) and is required: none is minted or printed, and
 //! nothing is listed in `automation.json`. Ctrl+F6 in the editor gives the
@@ -47,7 +49,7 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// A rectangle in physical pixels of the host window's client area.
@@ -99,6 +101,9 @@ pub struct Embed {
     pub export_dir: Option<PathBuf>,
     /// The name the Export sheet starts with (`--export-name`).
     pub export_name: Option<String>,
+    /// The line the Export sheet shows under the name, saying where the
+    /// host puts the file (`--export-note`).
+    pub export_note: Option<String>,
     /// Not shown until the host asks (`--hidden`).
     pub hidden: bool,
 }
@@ -199,6 +204,7 @@ pub fn set(embed: Embed) -> Result<(), String> {
             set_export_target(
                 folder.to_string_lossy().into_owned(),
                 embed.export_name.clone(),
+                embed.export_note.clone(),
             );
         }
         let parent = embed.parent;
@@ -392,6 +398,9 @@ struct ExportTarget {
     dir: String,
     /// The name the sheet starts with, until the sheet has taken it.
     name: Option<String>,
+    /// Where the host puts the finished file, in the host's words; shown
+    /// read-only under the name. Empty when the host said nothing.
+    note: String,
 }
 
 /// What the window last said about itself, for `host.state`: written on
@@ -462,11 +471,117 @@ pub fn set_project(path: Option<&Path>) {
     told().given = path.map(|path| path.to_string_lossy().into_owned());
 }
 
-fn set_export_target(dir: String, name: Option<String>) {
+fn set_export_target(dir: String, name: Option<String>, note: Option<String>) {
     told().target = Some(ExportTarget {
         dir,
         name: name.filter(|name| !name.trim().is_empty()),
+        note: note.map(|note| note.trim().to_owned()).unwrap_or_default(),
     });
+}
+
+/// The line the Export sheet shows where the folder row was: what the
+/// host does with the file. Empty when the host said nothing.
+pub fn export_note() -> String {
+    told()
+        .target
+        .as_ref()
+        .map(|target| target.note.clone())
+        .unwrap_or_default()
+}
+
+/// Counts the projects opened while embedded: the timeline pane scrolls
+/// its lanes to the first one with something on it once per opening
+/// (see `timeline-open-seq` in editor.slint). A host's project opens
+/// with its audio lanes under the picture, and the pane's own rule (the
+/// foot of the stack in view) showed only those, empty.
+static OPENED: AtomicI32 = AtomicI32::new(0);
+
+/// A project was opened (studio/project_files.rs); nothing when not embedded.
+pub fn note_opened() {
+    if active() {
+        OPENED.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// How many projects have opened while embedded; 0 when not embedded.
+pub fn opened() -> i32 {
+    OPENED.load(Ordering::SeqCst)
+}
+
+/// The panels an embedded editor starts with: the library, the picture
+/// and the inspector side by side across the top, and the timeline the
+/// whole width under them. A host's page is narrower than a window of the
+/// editor's own, and upstream's arrangement gives the timeline's right
+/// end to the inspector, which cut off the timeline's tools in a
+/// 1056-pixel area. Not remembered between starts while embedded.
+pub fn embedded_dock() -> crate::dock::Dock {
+    use crate::dock::Dock;
+    use crate::ui::PaneKind;
+    Dock::Split {
+        columns: false,
+        ratio: 0.6,
+        first: Box::new(Dock::Split {
+            columns: true,
+            ratio: 0.27,
+            first: Dock::leaf(PaneKind::Media),
+            second: Box::new(Dock::Split {
+                columns: true,
+                ratio: 0.7,
+                first: Dock::leaf(PaneKind::Preview),
+                second: Dock::leaf(PaneKind::Inspector),
+            }),
+        }),
+        second: Dock::leaf(PaneKind::Timeline),
+    }
+}
+
+/// The narrowest the library and the inspector are let be while
+/// embedded, and the least the rest of their row keeps, in logical pixels.
+/// Under these the library's tabs, its Import button and the inspector's
+/// tabs were cut off in a host's 1056-pixel area.
+const SIDE_MIN: f32 = 300.0;
+const REST_MIN: f32 = 420.0;
+
+/// Embedded only: widens a column split's library or inspector to
+/// [`SIDE_MIN`] where the area allows, taking it from the other side.
+/// Never narrows what a person widened. Called when the area changes size.
+pub fn fit_sides(node: &mut crate::dock::Dock, width: f32, height: f32) {
+    use crate::dock::{Dock, SEAT_GAP};
+    use crate::ui::PaneKind;
+    let Dock::Split {
+        columns,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return;
+    };
+    let along = if *columns { width } else { height };
+    let usable = (along - SEAT_GAP).max(0.0);
+    let side = |node: &Dock| {
+        matches!(
+            node,
+            Dock::Leaf(PaneKind::Media) | Dock::Leaf(PaneKind::Inspector)
+        )
+    };
+    if *columns && usable >= SIDE_MIN + REST_MIN {
+        let floor = SIDE_MIN / usable;
+        let (head_side, tail_side) = (side(&**first), side(&**second));
+        if head_side && !tail_side && *ratio < floor {
+            *ratio = floor;
+        } else if tail_side && !head_side && *ratio > 1.0 - floor {
+            *ratio = 1.0 - floor;
+        }
+    }
+    let head = usable * *ratio;
+    if *columns {
+        fit_sides(first, head, height);
+        fit_sides(second, usable - head, height);
+    } else {
+        fit_sides(first, width, head);
+        fit_sides(second, width, usable - head);
+    }
 }
 
 /// Whether the host named the folder exports go to: the Export sheet then
@@ -620,6 +735,7 @@ fn open_project(params: &serde_json::Value) -> Result<serde_json::Value, String>
     let path = text("path").ok_or_else(|| "path is the project's folder".to_owned())?;
     let export_dir = text("exportDir");
     let export_name = text("exportName");
+    let destination = text("destination");
     if told().seen.exporting {
         return Err(BUSY.to_owned());
     }
@@ -629,7 +745,7 @@ fn open_project(params: &serde_json::Value) -> Result<serde_json::Value, String>
         let switched = switch_project(studio, &given);
         if switched.is_ok() {
             if let Some(dir) = export_dir {
-                set_export_target(dir, export_name);
+                set_export_target(dir, export_name, destination);
             }
             // An Export sheet left open across the switch takes the new
             // folder and name now, not only at its next opening.
@@ -1511,13 +1627,52 @@ mod tests {
         // name is handed over once.
         assert_eq!(export_target(), None);
         assert!(!export_fixed());
-        set_export_target("out".to_owned(), Some("My clip".to_owned()));
+        set_export_target(
+            "out".to_owned(),
+            Some("My clip".to_owned()),
+            Some(" Replaces this clip ".to_owned()),
+        );
         assert!(export_fixed());
+        assert_eq!(export_note(), "Replaces this clip");
         assert_eq!(
             export_target(),
             Some(("out".to_owned(), Some("My clip".to_owned())))
         );
         assert_eq!(export_target(), Some(("out".to_owned(), None)));
+    }
+
+    #[test]
+    fn an_embedded_area_keeps_room_for_the_library_and_the_inspector() {
+        use crate::dock::{DockLayout, lay_out};
+        use crate::ui::PaneKind;
+        // A host's 1056 x 785 area: each side column at least SIDE_MIN.
+        let mut dock = embedded_dock();
+        fit_sides(&mut dock, 1040.0, 769.0);
+        let mut out = DockLayout::default();
+        lay_out(&dock, (8.0, 8.0, 1040.0, 769.0), &mut out);
+        let width = |kind| {
+            out.seats
+                .iter()
+                .find(|seat| seat.kind == kind)
+                .map(|seat| seat.width)
+                .unwrap()
+        };
+        assert!(width(PaneKind::Media) >= SIDE_MIN - 0.5);
+        assert!(width(PaneKind::Inspector) >= SIDE_MIN - 0.5);
+        assert!(width(PaneKind::Preview) >= 400.0);
+        // The timeline is the whole width.
+        assert!(width(PaneKind::Timeline) >= 1040.0 - 0.5);
+        // A wider column a person chose is left as it is.
+        let mut wide = embedded_dock();
+        fit_sides(&mut wide, 2400.0, 1200.0);
+        let mut out = DockLayout::default();
+        lay_out(&wide, (0.0, 0.0, 2400.0, 1200.0), &mut out);
+        let media = out
+            .seats
+            .iter()
+            .find(|s| s.kind == PaneKind::Media)
+            .unwrap();
+        assert!((media.width - (2400.0 - 8.0) * 0.27).abs() < 0.5);
     }
 
     #[test]

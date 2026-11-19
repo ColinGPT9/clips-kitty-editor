@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: clips-kitty-editor [--project <PROJECT_DIRECTORY> | --embed <HWND> [--bounds <X,Y,W,H>] [--api <ADDRESS>] [--project <PROJECT_DIRECTORY>] [--export-dir <DIRECTORY>] [--export-name <NAME>] [--hidden] | --software | --mcp [auto|window|headless] | --schema | --version | --smoke | --smoke-export <CLIP> | --whisper-cpu]";
+const USAGE: &str = "usage: clips-kitty-editor [--project <PROJECT_DIRECTORY> | --embed <HWND> [--bounds <X,Y,W,H>] [--api <ADDRESS>] [--project <PROJECT_DIRECTORY>] [--export-dir <DIRECTORY>] [--export-name <NAME>] [--export-note <TEXT>] [--hidden] | --software | --mcp [auto|window|headless] | --schema | --version | --smoke | --smoke-export <CLIP> | --whisper-cpu]";
 
 /// What one run of the binary was asked to do.
 #[derive(Debug, PartialEq, Eq)]
@@ -110,7 +110,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, String>
 }
 
 /// What follows `--embed`: the window, then `--bounds`, `--api`,
-/// `--project`, `--export-dir`, `--export-name` and `--hidden` in any
+/// `--project`, `--export-dir`, `--export-name`, `--export-note` and `--hidden` in any
 /// order, each at most once. `--hidden` takes no value.
 fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, String> {
     let parent = args
@@ -125,6 +125,7 @@ fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, St
         api: None,
         export_dir: None,
         export_name: None,
+        export_note: None,
         hidden: false,
     };
     let mut project = None;
@@ -164,6 +165,13 @@ fn parse_embedded(mut args: impl Iterator<Item = OsString>) -> Result<Launch, St
                     .to_str()
                     .map(str::to_owned)
                     .ok_or_else(|| "--export-name takes a name in Unicode".to_string())?,
+            );
+        } else if option == "--export-note" && embed.export_note.is_none() {
+            embed.export_note = Some(
+                value
+                    .to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "--export-note takes text in Unicode".to_string())?,
             );
         } else {
             return Err(USAGE.into());
@@ -270,6 +278,7 @@ mod tests {
                     api: None,
                     export_dir: None,
                     export_name: None,
+                    export_note: None,
                     hidden: false
                 }
             }
@@ -299,6 +308,7 @@ mod tests {
                     api: Some("127.0.0.1:7420".parse().unwrap()),
                     export_dir: None,
                     export_name: None,
+                    export_note: None,
                     hidden: false
                 }
             }
@@ -326,6 +336,7 @@ mod tests {
                     api: None,
                     export_dir: Some(PathBuf::from("clips/one/out")),
                     export_name: Some("My clip".to_owned()),
+                    export_note: None,
                     hidden: true
                 }
             }

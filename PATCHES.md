@@ -109,7 +109,7 @@ every caller of the network module.
 ```
 clips-kitty-editor.exe --embed <HWND, decimal or 0x hex>
         [--bounds x,y,w,h] [--api 127.0.0.1:PORT] [--project DIR]
-        [--export-dir DIR] [--export-name NAME] [--hidden]
+        [--export-dir DIR] [--export-name NAME] [--export-note TEXT] [--hidden]
 ```
 
 The window is created as a borderless child of the host's window: no title
@@ -155,7 +155,7 @@ with small hooks in `launch.rs`, `main.rs`, `lib.rs`, `platform.rs`,
 | `host.close` | the editor's own close: the project is saved, then the process leaves |
 | `host.info` | the window, its parent, its place, its style bits, `software`, `focused` |
 | `host.state` | what the host polls (below) |
-| `host.open_project {path, exportDir, exportName}` | another project, opened as File > Open does: the open project is saved and closed first. Answers `{}` once it is on screen. Refused with a sentence starting `busy:` while an export runs. A folder that is not a project, or that another process holds, is refused before the open project is touched, so it stays open; if the new project fails later than that, the one that was open is opened again |
+| `host.open_project {path, exportDir, exportName, destination}` | another project, opened as File > Open does: the open project is saved and closed first. Answers `{}` once it is on screen. Refused with a sentence starting `busy:` while an export runs. A folder that is not a project, or that another process holds, is refused before the open project is touched, so it stays open; if the new project fails later than that, the one that was open is opened again |
 
 `host.state` (every key always present; `project` is null on the empty screen):
 
@@ -193,7 +193,35 @@ with small hooks in `launch.rs`, `main.rs`, `lib.rs`, `platform.rs`,
 With `--export-dir` (or `exportDir`), the file goes into that folder (made if
 missing); the sheet shows no folder line, no Browse and no "Show in folder".
 The name starts as `--export-name` and can still be changed; the question
-before replacing a file of the same name stays.
+before replacing a file of the same name stays. Where the folder line was,
+the sheet shows the host's own line, read-only: `--export-note` at start,
+`destination` with `host.open_project` (Clips Kitty says "Replaces this clip
+in the Library", or the export folder the file will be moved to). No line
+when the host gives none.
+
+### The panels, embedded
+
+A host's page is narrower than a window of the editor's own: in a
+1056-pixel area upstream's arrangement cut off the library's tabs, its
+Import button, the inspector's tabs and the timeline's tools. Embedded:
+
+- the panels start as `embed::embedded_dock`: library, picture and
+  inspector across the top, the timeline the whole width under them;
+- the library and the inspector are widened to at least 300 logical pixels
+  whenever the area changes size and the rest of their row keeps 420
+  (`embed::fit_sides`); a column a person made wider is left alone;
+- the arrangement is not read from or saved to the settings (a host's area
+  is not a window size to come back to). Below 860 pixels the editor's own
+  compact arrangement takes over, as upstream's does.
+
+### The timeline when a project opens
+
+Upstream's timeline keeps the foot of the lane stack in view (on a phone,
+the main lane is the bottom one). A host's project has its sound lanes
+under the picture, so it opened showing only empty lanes. Embedded, each
+time a project opens the lanes are shown from the top lane that has
+something on it, until the person scrolls them (`timeline-first-row` and
+`timeline-open-seq` in `ui/editor.slint`, `embed::note_opened`).
 
 ### Not offered while embedded
 

@@ -30,6 +30,9 @@ export struct ExportData {
     /// An embedding host named the folder exports go to: no folder row,
     /// no Browse, no "Show in folder". See embed.rs.
     fixed-folder: bool,
+    /// With a fixed folder: the host's line saying where the file goes
+    /// ("Replaces this clip in the Library"); shown read-only.
+    destination: string,
     /// the file name, without folder or extension
     name: string,
     /// the whole path, already shortened for display by whoever owns it
@@ -288,6 +291,13 @@ component DestinationSection inherits DialogSection {
 
     // The whole path under the field rather than in it, so the part
     // you are editing is never the part that gets truncated away.
+    if root.data.fixed-folder && root.data.destination != "": Text {
+        text: root.data.destination;
+        color: Theme.fg-dim;
+        font-size: Theme.fs-sm;
+        wrap: word-wrap;
+    }
+
     if !root.data.fixed-folder: Text {
         text: root.data.path;
         color: Theme.fg-dim;
