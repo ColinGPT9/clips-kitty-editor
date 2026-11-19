@@ -244,11 +244,21 @@ pub fn current() -> String {
 ///
 /// Whatever the locale calls the editor, the sentence names this build:
 /// the locales stay upstream's, word for word, and the name is put in
-/// here, the one door every string comes through. See `brand.rs`.
+/// here, the one door every string comes through. See `brand.rs`. A line
+/// that names a service the upstream project runs (its download mirror,
+/// its sound library) keeps the upstream name: it is theirs, not this
+/// build's (`brand::UPSTREAM_KEYS`).
 pub fn t(key: &str) -> String {
+    let keep = concat_host::brand::names_upstream(key);
     translated(key)
         .or_else(|| english().by_key.get(key).cloned())
-        .map(|text| concat_host::brand::branded(&text))
+        .map(|text| {
+            if keep {
+                text
+            } else {
+                concat_host::brand::branded(&text)
+            }
+        })
         .unwrap_or_else(|| key.to_owned())
 }
 

@@ -50,6 +50,20 @@ pub const ADOPTS_FORMER_FOLDER: bool = false;
 /// Kitty updates the editor with itself.
 pub const UPDATES: bool = false;
 
+/// Interface lines (by locale key) that name something the upstream
+/// project owns and serves, not the editor itself: Settings' "Concat's
+/// mirror" download source (the upstream project's GitHub release) and
+/// the Audio page's "Concat sounds" (its asset repository). Branding them
+/// would say they are this build's, which they are not, so they keep the
+/// upstream name as a credit does.
+pub const UPSTREAM_KEYS: &[&str] = &["settings.concatsMirror", "sounds.offline"];
+
+/// Whether the line under `key` names the upstream project's own service
+/// and so is not branded (see [`UPSTREAM_KEYS`]).
+pub fn names_upstream(key: &str) -> bool {
+    UPSTREAM_KEYS.contains(&key)
+}
+
 /// `text` with the upstream name replaced by this build's: what every
 /// sentence shown to a person goes through, so the locales stay as
 /// upstream writes them and a merge never touches them.
@@ -73,6 +87,13 @@ mod tests {
         );
         assert_eq!(branded("Restart Concat?"), "Restart Clips Kitty Editor?");
         assert_eq!(branded("Nothing to rename"), "Nothing to rename");
+    }
+
+    #[test]
+    fn the_upstream_projects_own_services_keep_its_name() {
+        assert!(names_upstream("settings.concatsMirror"));
+        assert!(names_upstream("sounds.offline"));
+        assert!(!names_upstream("settings.restartTitle"));
     }
 
     #[test]
