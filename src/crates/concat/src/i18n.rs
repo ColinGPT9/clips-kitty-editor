@@ -246,19 +246,15 @@ pub fn current() -> String {
 /// the locales stay upstream's, word for word, and the name is put in
 /// here, the one door every string comes through. See `brand.rs`. A line
 /// that names a service the upstream project runs (its download mirror,
-/// its sound library) keeps the upstream name: it is theirs, not this
-/// build's (`brand::UPSTREAM_KEYS`).
+/// its sound library) is this build's own line, naming no product
+/// (`brand::OVERRIDES`).
 pub fn t(key: &str) -> String {
-    let keep = concat_host::brand::names_upstream(key);
+    if let Some(line) = concat_host::brand::line_for(key) {
+        return line.to_owned();
+    }
     translated(key)
         .or_else(|| english().by_key.get(key).cloned())
-        .map(|text| {
-            if keep {
-                text
-            } else {
-                concat_host::brand::branded(&text)
-            }
-        })
+        .map(|text| concat_host::brand::branded(&text))
         .unwrap_or_else(|| key.to_owned())
 }
 
@@ -461,5 +457,32 @@ mod tests {
         assert_ne!(t("common.settings"), "Settings");
         select(ENGLISH, &dirs);
         assert_eq!(t("common.settings"), "Settings");
+    }
+
+    /// No line a person reads, in any shipped language, names the editor
+    /// this one is built from: the credit is the About page's own literal
+    /// (`ui/brand.slint`), never a locale line (K-D2).
+    #[test]
+    fn no_line_in_any_language_shows_the_upstream_name() {
+        let _language = language();
+        let root = std::env::temp_dir().join(format!("concat-i18n-b-{}", std::process::id()));
+        let dirs = AppDirs::under(&root);
+        let keys: Vec<String> = inventory().into_keys().collect();
+        for (code, _) in BUILT_IN {
+            select(code, &dirs);
+            for key in &keys {
+                let line = t(key);
+                assert!(
+                    !line.contains(concat_host::brand::BASED_ON),
+                    "{code} {key:?} reads {line:?}"
+                );
+            }
+        }
+        select(ENGLISH, &dirs);
+        assert_eq!(t("settings.concatsMirror"), "Project mirror (GitHub)");
+        assert_eq!(
+            t("sounds.offline"),
+            "Could not reach the sound library. Check the connection and try again."
+        );
     }
 }

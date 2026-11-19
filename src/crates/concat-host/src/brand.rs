@@ -54,14 +54,24 @@ pub const UPDATES: bool = false;
 /// project owns and serves, not the editor itself: Settings' "Concat's
 /// mirror" download source (the upstream project's GitHub release) and
 /// the Audio page's "Concat sounds" (its asset repository). Branding them
-/// would say they are this build's, which they are not, so they keep the
-/// upstream name as a credit does.
-pub const UPSTREAM_KEYS: &[&str] = &["settings.concatsMirror", "sounds.offline"];
+/// would say they are this build's, which they are not, and leaving them
+/// would show another product's name, so they say what the thing is
+/// without naming a product. One English line for every language: the
+/// locales stay upstream's, word for word (K-D2).
+pub const OVERRIDES: &[(&str, &str)] = &[
+    ("settings.concatsMirror", "Project mirror (GitHub)"),
+    (
+        "sounds.offline",
+        "Could not reach the sound library. Check the connection and try again.",
+    ),
+];
 
-/// Whether the line under `key` names the upstream project's own service
-/// and so is not branded (see [`UPSTREAM_KEYS`]).
-pub fn names_upstream(key: &str) -> bool {
-    UPSTREAM_KEYS.contains(&key)
+/// This build's own line for `key`, when it has one (see [`OVERRIDES`]).
+pub fn line_for(key: &str) -> Option<&'static str> {
+    OVERRIDES
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, line)| *line)
 }
 
 /// `text` with the upstream name replaced by this build's: what every
@@ -90,10 +100,13 @@ mod tests {
     }
 
     #[test]
-    fn the_upstream_projects_own_services_keep_its_name() {
-        assert!(names_upstream("settings.concatsMirror"));
-        assert!(names_upstream("sounds.offline"));
-        assert!(!names_upstream("settings.restartTitle"));
+    fn the_upstream_projects_own_services_are_named_without_a_product() {
+        for (key, line) in OVERRIDES {
+            assert_eq!(line_for(key), Some(*line));
+            assert!(!line.contains(BASED_ON) && !line.contains(NAME), "{key}");
+        }
+        assert_eq!(line_for("settings.concatsMirror"), Some("Project mirror (GitHub)"));
+        assert_eq!(line_for("settings.restartTitle"), None);
     }
 
     #[test]

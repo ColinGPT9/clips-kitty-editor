@@ -134,6 +134,7 @@ jobs:
           cargo test --release -p concat --bin clips-kitty-editor --target x86_64-pc-windows-msvc 2>&1 | tail -n 40
           cargo test --release -p concat-host --lib --target x86_64-pc-windows-msvc brand:: 2>&1 | tail -n 20
           cargo test --release -p concat --lib --target x86_64-pc-windows-msvc embed:: 2>&1 | tail -n 30
+          cargo test --release -p concat --lib --target x86_64-pc-windows-msvc i18n:: 2>&1 | tail -n 30
 
       - name: Stage (Windows)
         shell: pwsh
