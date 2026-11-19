@@ -52,8 +52,8 @@
 // than by the surfaces around them.
 import { Accent } from "accent.slint";
 
-// Clips Kitty Editor: the surfaces, the ink, the lanes and the playhead are
-// Clips Kitty's navy and blue (base #0a1628, surface #13243d, raised
+// Clips Kitty Editor: the surfaces, the ink and the lanes are Clips Kitty's
+// navy and blue, the playhead upstream's lime (base #0a1628, surface #13243d, raised
 // #1c3354, ink #f1f5f9, muted #94a3b8, accent #38bdf8), each step of the
 // ladder kept where upstream's was. See PATCHES.md.
 export global Dark {
@@ -256,7 +256,9 @@ export global Dark {
     // a read of the accent, so a change of accent leaves the playhead where the
     // eye learnt to find it. Settings > Appearance can put any colour in its
     // place (theme.slint, `playhead-custom`).
-    out property <color> playhead: #38bdf8;
+    // Upstream's lime, kept: Settings names this swatch "Lime", and the
+    // playhead stays a colour of its own against Clips Kitty's blue accent.
+    out property <color> playhead: #cbf53f;
     // Drawn on the audio clip's own dark ground, so it is a light wash of the
     // kind's hue rather than the vivid mark itself.
     out property <color> wave: #a7f0c2b3;      // 0.7 alpha

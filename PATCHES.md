@@ -37,7 +37,8 @@ What reads them:
   never touches a locale.
 - **The window's title** (`ui/app.slint`), the start-up failure dialog and its
   title (`platform.rs`), Settings > About's name and system report
-  (`sysinfo.rs`), the build line in the log (`machine.rs`).
+  (`sysinfo.rs`; its Engine row says only the FFmpeg build, not the internal
+  `concat-engine` crate name), the build line in the log (`machine.rs`).
 - **Messages made in Rust** that reach a notice: "a ... project already exists",
   "is not a ... project", "open in another ...", "saved by a newer ...", the
   microphone format message, the reason Windows is given for staying awake
@@ -75,8 +76,9 @@ raised `#1c3354`, ink `#f1f5f9`, muted `#94a3b8`, accent `#38bdf8`.
 
 - `dark.slint`: the surfaces (panel, raised, well, field and its two states,
   the launch ladder, lanes, ruler, page) are that navy ladder, each step kept
-  where upstream's grey one was; the ink and the muted ink are Clips Kitty's;
-  the palette's own playhead is the accent.
+  where upstream's grey one was; the ink and the muted ink are Clips Kitty's.
+  The playhead stays upstream's lime: Settings > Appearance names that swatch
+  "Lime", and a blue playhead was labelled "Lime" in the first build.
 - The "Sky" accent row is Clips Kitty's blue in both palettes (`#38bdf8` on
   dark; `#0369a1` on light, where the bright blue cannot be read as ink), and
   it is the default accent (`prefs.rs` asks `brand::DEFAULT_ACCENT`). The other
@@ -85,8 +87,9 @@ raised `#1c3354`, ink `#f1f5f9`, muted `#94a3b8`, accent `#38bdf8`.
 ## 4. Credit
 
 Settings > About shows the name and version, then "Based on Concat",
-"AGPL-3.0-or-later", and two links: Concat's repository and this build's own
-source (`ui/dialogs/settings.slint`, reading `brand.slint`).
+"AGPL-3.0-or-later" (on screen, and in the section's hint), and two links:
+Concat's repository and this build's own source (`ui/dialogs/settings.slint`,
+reading `brand.slint`).
 
 ## 5. No calls to the upstream project's servers on the editor's behalf
 
@@ -204,6 +207,24 @@ maximise and close buttons. The host offers what replaces them.
 
 A press in the editor gives it the keyboard. `host.blur`, hiding the editor,
 or **Ctrl+F6** pressed in the editor gives it back to the host's window.
+When the keyboard lands on the host's own window within half a second of a
+key pressed in the editor, while that window is in front and nobody asked
+for it back, the editor takes it back (see the findings at the end).
+
+### Staying on top of the host's other child windows
+
+Chromium (Electron 31) makes a child window of its own some time after start
+(`Chrome_RenderWidgetHostHWND`, for accessibility and touch) and puts it first
+among the window's children. It is drawn under the editor, so nothing looks
+wrong, but it took every click meant for the editor (K1 tests: clicks in the
+editor reached the host's page). The watch on the host's window (every 250 ms)
+puts the editor's window back on top whenever a shown sibling that overlaps it
+is above it (`keep_on_top` in `embed.rs`).
+
+### `host.open_project` with the Export sheet open
+
+The sheet takes the new folder and name at once; before, it kept the old
+project's name until it was closed and opened again.
 
 ### When the host goes away
 
@@ -226,5 +247,20 @@ tries whichever program name the bundle has.
 
 ## Findings on "the first pause after launch is dropped"
 
-Not yet looked into on a build of this branch; this section is filled in
-after the build is tried.
+Tried on build 44399491727 (Electron 31.7.7 host, the "Playback timer" test
+project), polling who has the keyboard every 100 ms:
+
+- After a click in the editor, the editor has the keyboard (30 of 30 polls).
+- The first Space after launch starts playback, and within 100 ms the keyboard
+  is on the host's top-level window (30 of 30 polls after it). The next Space
+  goes to the host, so the pause is dropped. Seen in 3 runs of 3.
+- After a second click in the editor, Space plays and pauses and the keyboard
+  stays in the editor.
+
+So the report holds, and the cause is that the first playback start moves the
+keyboard to the host's window. Which call does that was not found from the
+source (GUESS: something the first playback opens, such as the audio output,
+activating the host's window). The editor's own code asks nothing of the
+focus there. The fix is in embed code only: after a key pressed in the editor,
+the editor watches for 0.5 s and takes the keyboard back if it went to the
+host's window with nobody asking (`keep_focus_after_key` in `embed.rs`).

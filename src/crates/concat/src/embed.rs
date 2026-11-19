@@ -300,6 +300,16 @@ pub fn pressed() {
     imp::take_focus_after_press();
 }
 
+/// A key pressed in the editor. The first Space that starts playback after
+/// launch handed the keyboard to the host's window within 100 ms, with no
+/// one asking, so the next Space - the pause - went to the host's page
+/// (K1 tests, three runs of three; PATCHES.md, F4): if the keyboard lands
+/// on the host's own window just after a key here, it is taken back.
+pub fn key_pressed() {
+    #[cfg(windows)]
+    imp::keep_focus_after_key();
+}
+
 /// The editor's window got the keyboard, or lost it: said in the log with
 /// what has it now, which is what a key that "was dropped" is traced by.
 pub fn focus_changed(focused: bool) {
@@ -616,14 +626,28 @@ fn open_project(params: &serde_json::Value) -> Result<serde_json::Value, String>
     let (answer, answered) = std::sync::mpsc::channel::<Result<(), String>>();
     let given = path.clone();
     crate::host::on_ui(move |studio, _, _| {
-        let _ = answer.send(switch_project(studio, &given));
+        let switched = switch_project(studio, &given);
+        if switched.is_ok() {
+            if let Some(dir) = export_dir {
+                set_export_target(dir, export_name);
+            }
+            // An Export sheet left open across the switch takes the new
+            // folder and name now, not only at its next opening.
+            if studio.export.open
+                && studio.export.phase != crate::ui::ExportPhase::Running
+                && let Some((folder, name)) = export_target()
+            {
+                studio.export.folder = folder;
+                if let Some(name) = name {
+                    studio.export.name = name;
+                }
+            }
+        }
+        let _ = answer.send(switched);
     });
     match answered.recv_timeout(std::time::Duration::from_secs(60)) {
         Ok(Ok(())) => {
             told().given = Some(path);
-            if let Some(dir) = export_dir {
-                set_export_target(dir, export_name);
-            }
             Ok(serde_json::json!({}))
         }
         Ok(Err(why)) => Err(why),
@@ -745,9 +769,12 @@ mod win {
     pub const SWP_NOMOVE: u32 = 0x0002;
     pub const SWP_NOACTIVATE: u32 = 0x0010;
     pub const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
+    pub const GW_CHILD: u32 = 5;
+    pub const GW_HWNDNEXT: u32 = 2;
 
     #[link(name = "user32")]
     unsafe extern "system" {
+        pub fn GetWindow(hwnd: HWND, command: u32) -> HWND;
         pub fn IsWindow(hwnd: HWND) -> i32;
         pub fn IsWindowVisible(hwnd: HWND) -> i32;
         pub fn IsChild(parent: HWND, hwnd: HWND) -> i32;
@@ -1020,6 +1047,7 @@ mod imp {
     /// input queue (a child window's thread always does), so it can hand the
     /// focus over. On the event loop's thread.
     fn give_focus_back() {
+        GAVE_BACK.fetch_add(1, Ordering::SeqCst);
         let child = CHILD.load(Ordering::SeqCst);
         if child == 0 {
             return;
@@ -1038,6 +1066,46 @@ mod imp {
 
     fn blur() {
         let _ = slint::invoke_from_event_loop(give_focus_back);
+    }
+
+    /// How many times the keyboard was handed back on purpose (host.blur,
+    /// Ctrl+F6, hiding): a key's watch below stands down after one.
+    static GAVE_BACK: AtomicU32 = AtomicU32::new(0);
+
+    /// See [`super::key_pressed`]. On the event loop's thread, from the
+    /// window's own key event. Only the host's top-level window is watched
+    /// for, and only while it is the foreground window: a dialog, another
+    /// program or a click on the host's page (which never moves the
+    /// keyboard; see [`give_focus_back`]) is left alone.
+    pub fn keep_focus_after_key() {
+        let child = CHILD.load(Ordering::SeqCst);
+        // SAFETY: a plain Win32 read on this thread's own queue.
+        if child == 0 || unsafe { win::GetFocus() } != child {
+            return;
+        }
+        let gave = GAVE_BACK.load(Ordering::SeqCst);
+        for delay in [60u64, 200, 500] {
+            slint::Timer::single_shot(Duration::from_millis(delay), move || {
+                let child = CHILD.load(Ordering::SeqCst);
+                if child == 0
+                    || GAVE_BACK.load(Ordering::SeqCst) != gave
+                    || !VISIBLE.load(Ordering::SeqCst)
+                {
+                    return;
+                }
+                // SAFETY: plain Win32 calls on this thread's own window and
+                // the root it shares an input queue with.
+                unsafe {
+                    let root = win::GetAncestor(child, win::GA_ROOT);
+                    if root != 0 && win::GetFocus() == root && win::GetForegroundWindow() == root {
+                        log::info!(
+                            "embed: the keyboard went to the host's window just after a key in the editor, with nobody asking; taken back"
+                        );
+                        win::SetFocus(child);
+                    }
+                }
+            });
+        }
     }
 
     /// Whether the pointer is over the editor's window (or something in it).
@@ -1107,11 +1175,20 @@ mod imp {
         let started = std::thread::Builder::new()
             .name("embed parent watch".to_owned())
             .spawn(move || {
+                let mut raised = 0u32;
                 loop {
                     std::thread::sleep(Duration::from_millis(250));
                     // SAFETY: IsWindow takes any value.
                     if unsafe { win::IsWindow(parent) } == 0 {
                         break;
+                    }
+                    if keep_on_top(parent) {
+                        raised += 1;
+                        if raised <= 8 {
+                            log::info!(
+                                "embed: another of the host's windows was above the editor's; the editor's is on top again"
+                            );
+                        }
                     }
                 }
                 log::warn!("embed: the host's window {parent:#x} is gone; the editor closes");
@@ -1126,6 +1203,66 @@ mod imp {
         if let Err(error) = started {
             log::warn!("embed: could not watch the host's window: {error}");
         }
+    }
+
+    /// Puts the editor's window back above the host's other child windows
+    /// when one of them is on top of it while it is shown. Chromium makes a
+    /// child window of its own after start (for accessibility and touch)
+    /// and puts it first: drawn under the editor, it still took every click
+    /// meant for the editor (seen in the K1 tests on Electron 31). Says
+    /// whether it had to. Any thread: the move is asynchronous.
+    fn keep_on_top(parent: isize) -> bool {
+        let child = CHILD.load(Ordering::SeqCst);
+        if child == 0 || !wants_visible() {
+            return false;
+        }
+        // SAFETY: plain Win32 reads of window handles; a stale handle reads
+        // as none, and the move below only fails.
+        unsafe {
+            if win::IsWindowVisible(child) == 0 {
+                return false;
+            }
+            let first = win::GetWindow(parent, win::GW_CHILD);
+            if first == 0 || first == child {
+                return false;
+            }
+            // Only a window that is shown and overlaps the editor's counts.
+            let mut mine = win::RECT::default();
+            if win::GetWindowRect(child, &mut mine) == 0 {
+                return false;
+            }
+            let mut above = first;
+            let mut covered = false;
+            let mut steps = 0;
+            while above != 0 && above != child && steps < 64 {
+                let mut theirs = win::RECT::default();
+                if win::IsWindowVisible(above) != 0
+                    && win::GetWindowRect(above, &mut theirs) != 0
+                    && theirs.left < mine.right
+                    && mine.left < theirs.right
+                    && theirs.top < mine.bottom
+                    && mine.top < theirs.bottom
+                {
+                    covered = true;
+                    break;
+                }
+                above = win::GetWindow(above, win::GW_HWNDNEXT);
+                steps += 1;
+            }
+            if !covered {
+                return false;
+            }
+            win::SetWindowPos(
+                child,
+                win::HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                win::SWP_NOMOVE | win::SWP_NOSIZE | win::SWP_NOACTIVATE | win::SWP_ASYNCWINDOWPOS,
+            );
+        }
+        true
     }
 
     fn number(params: &Value, key: &str) -> Result<i32, String> {

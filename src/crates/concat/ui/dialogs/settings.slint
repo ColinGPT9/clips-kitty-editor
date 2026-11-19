@@ -1689,6 +1689,13 @@ export component SettingsDialog inherits Sheet {
                         spacing: 4px;
                         alignment: start;
 
+                        // The licence on screen, not only in the hint.
+                        Text {
+                            text: Brand.licence;
+                            color: Theme.fg-muted;
+                            font-size: Theme.fs-sm;
+                        }
+
                         HorizontalLayout {
                             alignment: start;
                             Button {

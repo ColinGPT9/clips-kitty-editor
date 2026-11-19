@@ -305,6 +305,11 @@ impl CustomApplicationHandler for DropHandler {
                 {
                     return EventResult::PreventDefault;
                 }
+                WindowEvent::KeyboardInput { event: key, .. }
+                    if key.state == ElementState::Pressed =>
+                {
+                    crate::embed::key_pressed();
+                }
                 _ => {}
             }
         }
