@@ -68,6 +68,8 @@ pub use platform::{LogSharer, install_log_sharer, log_file_name, note_last_exit}
 pub use platform::{MicrophoneAccess, install_microphone_access};
 #[cfg(test)]
 mod close_gate_tests;
+#[cfg(test)]
+mod field_focus_tests;
 mod panes;
 mod prefs;
 mod presets;

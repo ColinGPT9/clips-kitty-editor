@@ -923,6 +923,12 @@ export component ColourField inherits HorizontalLayout {
                         width: 1px;
                         background: Theme.line;
                     }
+                    // The hash is the field's too: a press on it types in
+                    // the field rather than reaching the window's shortcuts.
+                    TouchArea {
+                        mouse-cursor: MouseCursor.text;
+                        clicked => { input.focus(); }
+                    }
                     Text {
                         width: parent.width;
                         height: parent.height;

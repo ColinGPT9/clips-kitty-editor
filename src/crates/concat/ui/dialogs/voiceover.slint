@@ -543,6 +543,7 @@ export component VoiceoverPanel inherits Rectangle {
                     box-height: root.phone ? 96px : 120px;
                     content-height: root.taking ? 0px : script.preferred-height;
                     focused: script.has-focus;
+                    focus-field => { script.focus(); }
 
                     script := TextInput {
                         x: script-box.pad-x;

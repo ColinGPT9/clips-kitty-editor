@@ -231,6 +231,10 @@ CapCut draft (an empty ground is shown when no project is open); Settings >
 Automation; Settings' "Draw on the GPU" switch; the window's own minimise,
 maximise and close buttons. The host offers what replaces them.
 
+The project's folder is not shown either (Details > Project > Folder, and the
+line under the name in the project sheet): embedded, the folder is the host's
+own storage, an id under its data folder rather than a place the person chose.
+
 ### Keyboard
 
 A press in the editor gives it the keyboard. `host.blur`, hiding the editor,
@@ -251,8 +255,11 @@ is above it (`keep_on_top` in `embed.rs`).
 
 ### `host.open_project` with the Export sheet open
 
-The sheet takes the new folder and name at once; before, it kept the old
-project's name until it was closed and opened again.
+The sheet closes, and a finished or failed export of the project before is
+forgotten (see section 9); the next opening takes the host's folder and name.
+Before, the sheet kept the old project's name, and after an export it went on
+saying "Exported · 31 MB" and offering "Export again" for a project that was
+never exported.
 
 ### When the host goes away
 
@@ -272,6 +279,40 @@ folder uploaded as an artifact (`clips-kitty-editor.exe`, FFmpeg 8.1 LGPL
 shared DLLs, ONNX Runtime, whisper's CPU modules, the Visual C++ runtime,
 LICENSE, THIRD_PARTY_NOTICES.md, PATCHES.md). `scripts/ci/smoke-windows.ps1`
 tries whichever program name the bundle has.
+
+## 9. Fixes that apply without `--embed` too
+
+Plain bug fixes, standalone as well as embedded; each could go upstream as it is.
+
+- **A press inside a text box's border keeps the typing in it.** The caption
+  text box in the inspector, and the script boxes of Captions, Speech and
+  Voice-over (`ResizeBox`), leave padding round their words (6 to 8 px above
+  and below, and a gutter on the right). A press there landed on the window's
+  own keyboard scope (`keys` in `ui/app.slint`), which takes the focus on a
+  press on nothing: the field let go with only its border turning grey, and
+  the letters typed next ran the one-key shortcuts (w trimmed a caption with
+  a ripple, m muted a clip, Delete removed a clip). `ResizeBox` now has a
+  `focus-field` callback and a press anywhere in its frame calls it; every box
+  answers it with its field's `focus()`. The same holds now for the colour's
+  hex field (the picker's padding, and the `#` beside the inspector's) and a
+  timeline tab's rename box. The other fields already took a press in their
+  padding. `src/field_focus_tests.rs` checks it in the source (this build has
+  no Slint test backend). Inside a focused field no shortcut ever fired: a key
+  reaches the window's shortcuts only when no field takes it.
+- **The Export sheet says the finished file's real size.** "Exported · 46 MB"
+  was the estimate made before the render, for a file of 5 MB. It is now the
+  size of the written file on disk; a failed or cancelled export, or a file
+  that cannot be read, says no size ("Export finished").
+- **Another project opening closes the Export sheet** and forgets a finished
+  or failed export (a render still running is left as it is).
+
+Not fixed here: characters typed as `VK_PACKET` (a key-down and key-up with
+`KEYEVENTF_UNICODE`, as some automation, remote-control and on-screen
+keyboards send) are sometimes lost when the editor is embedded. winit 0.30
+drops a `WM_CHAR` that arrives after its key's key-up
+(`platform_impl/windows/keyboard.rs`, the "probably IME" branch), and a child
+window shares the host's input queue, which makes that order likely. A
+physical keyboard never sends `VK_PACKET`; the fix belongs in winit.
 
 ## Findings on "the first pause after launch is dropped"
 

@@ -17,6 +17,7 @@ import { Theme } from "../theme/theme.slint";
 //     box := ResizeBox {
 //         content-height: words.preferred-height;
 //         focused: words.has-focus;
+//         focus-field => { words.focus(); }
 //         words := TextInput {
 //             y: box.pad-y;
 //             width: parent.width;
@@ -39,6 +40,15 @@ export component ResizeBox inherits Rectangle {
     /// The words' room inside the padding, for the child's own height.
     out property <length> view-height: root.height - 2 * root.pad-y;
 
+    /// A press inside the frame but off the words - its padding, the
+    /// strip by the scroll thumb, below a short text - hands the keyboard
+    /// to the words. The user answers it with its TextInput's `focus()`.
+    /// Without it such a press fell through to the window's own keyboard
+    /// scope, the field let go without a sign a person would notice, and
+    /// the next letters typed ran the editor's one-key shortcuts (w
+    /// trimmed a clip, m muted one) instead of being written.
+    callback focus-field();
+
     /// Scrolls the least that puts `h` of words from `y` - the caret's
     /// line, in the words' own coordinates - inside the frame.
     public function reveal(y: length, h: length) {
@@ -57,6 +67,13 @@ export component ResizeBox inherits Rectangle {
     border-width: 1px;
     border-color: root.focused ? Theme.accent : Theme.line;
     clip: true;
+
+    // Under the words and the corner, so the words still take their own
+    // presses (a caret placed, a selection dragged) and the corner its drag.
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { root.focus-field(); }
+    }
 
     flick := Flickable {
         x: root.pad-x;

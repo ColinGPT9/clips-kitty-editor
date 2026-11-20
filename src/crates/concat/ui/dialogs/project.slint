@@ -72,7 +72,8 @@ export component ProjectDialog inherits Modal {
 
             // The folder under the field, whole: the one fact here that
             // cannot be changed, and the one most worth being able to read.
-            Text {
+            // None when embedded in a host's window: see panes/project.rs.
+            if root.data.folder != "": Text {
                 text: root.data.folder;
                 color: Theme.fg-dim;
                 font-family: Theme.font-technical;

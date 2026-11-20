@@ -538,7 +538,10 @@ component ExportFooter inherits VerticalLayout {
         }
 
         Text {
-            text: I18n.t1("export.exported", "\{root.data.done-size}");
+            // The written file's own size; a file that could not be read
+            // has none to say, and the sheet says only that it finished.
+            text: root.data.done-size == "" ? I18n.t("export.exportFinished")
+                : I18n.t1("export.exported", "\{root.data.done-size}");
             color: Theme.green;
             font-size: Theme.fs;
             font-weight: Theme.weight-title;

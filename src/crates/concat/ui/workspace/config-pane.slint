@@ -537,7 +537,10 @@ export component ConfigPane inherits Rectangle {
 
                     FactHeading { title: I18n.t("configPane.project"); }
                     FactRow { label: I18n.t("common.name"); value: root.project-name; }
-                    FactRow { label: I18n.t("configPane.folder"); value: root.project-folder; }
+                    // No row when the folder is not shown: embedded in a host's
+                    // window, where the folder is the host's own storage and
+                    // means nothing to the person (keyframes.rs).
+                    if root.project-folder != "": FactRow { label: I18n.t("configPane.folder"); value: root.project-folder; }
 
                     // The frame is a timeline's, not the project's: two cuts
                     // of one edit can be two shapes, and these rows say which

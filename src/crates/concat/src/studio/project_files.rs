@@ -151,6 +151,9 @@ impl Studio {
                 self.dirty = false;
                 self.project_name = info.name.clone();
                 self.export.name = projects::folder_name(&info.name);
+                // The Export sheet's finished (or failed) export was the
+                // last project's: not offered as this one's.
+                self.export.project_changed();
                 self.selection.clear();
                 self.transition_selected = None;
                 self.media.selected.clear();

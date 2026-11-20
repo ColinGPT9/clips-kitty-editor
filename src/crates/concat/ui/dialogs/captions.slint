@@ -182,6 +182,7 @@ export component CaptionsForm inherits VerticalLayout {
             script-box := ResizeBox {
                 content-height: script.preferred-height;
                 focused: script.has-focus;
+                focus-field => { script.focus(); }
 
                 script := TextInput {
                     x: script-box.pad-x;

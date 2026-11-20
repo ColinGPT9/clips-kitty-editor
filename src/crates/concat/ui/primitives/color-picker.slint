@@ -244,6 +244,13 @@ export component ColorPicker inherits VerticalLayout {
             border-width: 1px;
             border-color: hex.has-focus ? Theme.accent : Colors.transparent;
 
+            // The field's padding is the field's: a press there types in it,
+            // rather than reaching the window's one-key shortcuts.
+            TouchArea {
+                mouse-cursor: MouseCursor.text;
+                clicked => { hex.focus(); }
+            }
+
             hex := TextInput {
                 x: 10px;
                 width: parent.width - 20px;

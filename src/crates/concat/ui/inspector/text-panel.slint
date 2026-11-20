@@ -198,6 +198,7 @@ export component TextPanel inherits VerticalLayout {
                 pad-y: 6px;
                 content-height: body.preferred-height;
                 focused: body.has-focus;
+                focus-field => { body.focus(); }
 
                 body := TextInput {
                     x: body-box.pad-x;

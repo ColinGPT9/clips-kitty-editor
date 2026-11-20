@@ -1950,12 +1950,18 @@ impl Studio {
         // The Details panel, and the sheet its Modify button opens. The
         // frame, rate and duration are the active timeline's, and the panel
         // says so by name; the name and folder are the project's.
-        let folder: SharedString = self
-            .session
-            .as_ref()
-            .map(|session| session.path().to_owned())
-            .unwrap_or_else(|| "—".to_owned())
-            .into();
+        // Embedded in a host's window the project's folder is the host's
+        // own storage - an id under its data folder, nothing a person
+        // chose or would look for - so the row is left out (empty hides it).
+        let folder: SharedString = if crate::embed::active() {
+            SharedString::new()
+        } else {
+            self.session
+                .as_ref()
+                .map(|session| session.path().to_owned())
+                .unwrap_or_else(|| "—".to_owned())
+                .into()
+        };
         let timeline_name: SharedString = self.timeline().name.as_str().into();
         editor.set_project_name(self.project_name.as_str().into());
         editor.set_project_folder(folder.clone());

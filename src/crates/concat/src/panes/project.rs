@@ -163,12 +163,18 @@ impl ProjectPane {
     pub fn data(&self, studio: &Studio) -> ProjectSheetData {
         let (width, height) = self.frame();
         let (num, den) = self.rate();
-        let folder: SharedString = studio
-            .session
-            .as_ref()
-            .map(|session| session.path().to_owned())
-            .unwrap_or_else(|| "—".to_owned())
-            .into();
+        // Not said when embedded in a host's window: the folder is the
+        // host's own storage, an id rather than a place a person chose.
+        let folder: SharedString = if crate::embed::active() {
+            SharedString::new()
+        } else {
+            studio
+                .session
+                .as_ref()
+                .map(|session| session.path().to_owned())
+                .unwrap_or_else(|| "—".to_owned())
+                .into()
+        };
         ProjectSheetData {
             open: self.open,
             name: self.name.as_str().into(),

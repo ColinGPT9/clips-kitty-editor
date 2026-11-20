@@ -89,6 +89,10 @@ pub struct ExportPane {
     pub message: String,
     /// Where the finished file is, for Reveal.
     pub written: String,
+    /// The finished file's size on disk, read once it is written: what the
+    /// sheet says it came to. The sheet said the estimate there before,
+    /// "Exported · 46 MB" for a file of 5 MB.
+    pub written_bytes: Option<u64>,
     /// Where the render that is running will leave its file: what an
     /// embedding host is told of an export that failed or was cancelled.
     pub pending: String,
@@ -121,6 +125,7 @@ impl Default for ExportPane {
             stage: String::new(),
             message: String::new(),
             written: String::new(),
+            written_bytes: None,
             pending: String::new(),
             started_at: None,
         }
@@ -177,6 +182,7 @@ impl ExportPane {
             ExportMsg::Again => {
                 self.phase = ExportPhase::Idle;
                 self.progress = 0.0;
+                self.written_bytes = None;
             }
             // The picker runs with the studio unborrowed and answers as a
             // message of its own; see `host::after_dialog`.
@@ -223,6 +229,7 @@ impl ExportPane {
                 self.phase = ExportPhase::Done;
                 self.progress = 1.0;
                 self.written = written.clone();
+                self.written_bytes = size_on_disk(&written);
                 // The host of an embedded editor learns of it here, once
                 // the file is whole under its own name: the engine renders
                 // beside the file and renames at the end (concat-export's
@@ -248,6 +255,9 @@ impl ExportPane {
                 }
             }
             ExportMsg::Published(Ok(path)) => {
+                if let Some(size) = size_on_disk(&path) {
+                    self.written_bytes = Some(size);
+                }
                 self.written = path;
                 studio.notify(&t("export.exportFinished"), false);
             }
@@ -394,6 +404,36 @@ impl ExportPane {
         let deep = if self.deep(studio) { 1.25 } else { 1.0 };
         let kbps = base * motion * self.codec(studio).size_factor() * deep;
         ((kbps / 500.0).round() * 500.0).max(500.0) as u32
+    }
+
+    /// What the sheet says a finished export came to: the written file's
+    /// own size, and nothing at all for a render that did not finish or a
+    /// file that could not be read - never the estimate.
+    pub fn done_size(&self) -> String {
+        match self.written_bytes {
+            Some(size) if self.phase == ExportPhase::Done => bytes(size as f32),
+            _ => String::new(),
+        }
+    }
+
+    /// Another project is open in the window: a finished or failed export
+    /// was the last one's, so the sheet lets go of it - closed, its result
+    /// forgotten - rather than offering "Export again" and a size for a
+    /// project that was never exported. A render still running is left
+    /// alone (an embedding host is refused a switch while one runs).
+    pub fn project_changed(&mut self) {
+        if self.phase == ExportPhase::Running {
+            return;
+        }
+        self.open = false;
+        self.phase = ExportPhase::Idle;
+        self.progress = 0.0;
+        self.stage.clear();
+        self.message.clear();
+        self.written.clear();
+        self.written_bytes = None;
+        self.pending.clear();
+        self.started_at = None;
     }
 
     /// The file's size, in bytes: the bitrate is an average the encoder
@@ -557,6 +597,7 @@ impl ExportPane {
         self.stage = t("export.preparing");
         self.message.clear();
         self.written.clear();
+        self.written_bytes = None;
         self.pending = output.clone();
         self.started_at = Some(std::time::Instant::now());
 
@@ -755,7 +796,7 @@ impl ExportPane {
                 slint::SharedString::new()
             },
             message: self.message.as_str().into(),
-            done_size: bytes(self.size_bytes(studio)).into(),
+            done_size: self.done_size().into(),
             empty: clips == 0,
         }
     }
@@ -789,9 +830,79 @@ fn file_name(typed: &str) -> Option<String> {
     (!name.chars().any(refused)).then(|| name.to_owned())
 }
 
+/// A file's size in bytes, or nothing when it cannot be read.
+fn size_on_disk(path: &str) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map(|meta| meta.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A finished export says the written file's size, not the estimate;
+    /// a failed or cancelled one, or one whose file cannot be read, says
+    /// none.
+    #[test]
+    fn the_finished_size_is_the_file_s() {
+        let dir = std::env::temp_dir().join(format!("kitty-export-size-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("out.mp4");
+        std::fs::write(&file, vec![0u8; 5_400_000]).unwrap();
+        let written = file.to_string_lossy().into_owned();
+
+        let mut pane = ExportPane::default();
+        pane.phase = ExportPhase::Done;
+        pane.written_bytes = size_on_disk(&written);
+        assert_eq!(pane.written_bytes, Some(5_400_000));
+        assert_eq!(pane.done_size(), "5 MB");
+
+        pane.phase = ExportPhase::Failed;
+        assert_eq!(pane.done_size(), "");
+        pane.phase = ExportPhase::Idle;
+        assert_eq!(pane.done_size(), "");
+
+        pane.phase = ExportPhase::Done;
+        pane.written_bytes = size_on_disk(&dir.join("gone.mp4").to_string_lossy());
+        assert_eq!(pane.done_size(), "", "a file that is not there has no size to say");
+        assert_eq!(size_on_disk(&dir.to_string_lossy()), None, "a folder is no file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Another project opening forgets the last one's finished export and
+    /// closes the sheet; a running render is left as it is.
+    #[test]
+    fn a_new_project_forgets_the_last_export() {
+        let mut pane = ExportPane::default();
+        pane.open = true;
+        pane.phase = ExportPhase::Done;
+        pane.progress = 1.0;
+        pane.written = "C:/out/a.mp4".into();
+        pane.written_bytes = Some(31_000_000);
+        pane.project_changed();
+        assert!(!pane.open);
+        assert!(pane.phase == ExportPhase::Idle);
+        assert!(pane.written.is_empty());
+        assert_eq!(pane.written_bytes, None);
+        assert_eq!(pane.done_size(), "");
+
+        pane.open = true;
+        pane.phase = ExportPhase::Failed;
+        pane.message = "it broke".into();
+        pane.project_changed();
+        assert!(!pane.open);
+        assert!(pane.message.is_empty());
+
+        pane.open = true;
+        pane.phase = ExportPhase::Running;
+        pane.progress = 0.5;
+        pane.project_changed();
+        assert!(pane.open, "a running render keeps its sheet");
+        assert!(pane.phase == ExportPhase::Running);
+        assert_eq!(pane.progress, 0.5);
+    }
 
     /// A name is a file's or the export does not start: trimmed, never
     /// empty, never a path, and none of the characters Windows refuses.

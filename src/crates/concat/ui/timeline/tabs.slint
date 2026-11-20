@@ -126,6 +126,13 @@ component Tab inherits Rectangle {
         border-color: Theme.accent;
         clip: true;
 
+        // The box's padding is the field's: a press there keeps typing in
+        // it, rather than ending the rename and reaching the shortcuts.
+        TouchArea {
+            mouse-cursor: MouseCursor.text;
+            clicked => { rename.focus(); }
+        }
+
         rename := TextInput {
             x: 5px;
             y: (parent.height - self.height) / 2;
