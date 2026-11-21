@@ -95,3 +95,80 @@ fn padded_fields_take_a_press_in_their_padding() {
         assert!(read(file).contains(call), "{file}: {call}");
     }
 }
+
+fn source(relative: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join(relative);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("reading src/{relative}: {error}"))
+}
+
+/// What is still being typed in a field that commits on its way out (a
+/// timeline tab's rename, a number field, a hex box) is committed before
+/// the host closes the editor, switches its project, or goes away: each of
+/// those three roads calls `commit_typing` before it saves (FL2 F6).
+#[test]
+fn the_hosts_ways_out_commit_the_typing_first() {
+    let embed = source("embed.rs");
+    let commit = embed
+        .find("pub(crate) fn commit_typing()")
+        .expect("embed.rs has commit_typing");
+    let body = &embed[commit..];
+    let body = &body[..body.find("\n}\n").expect("commit_typing ends")];
+    assert!(
+        body.contains("if !active()"),
+        "commit_typing is embedded only"
+    );
+    assert!(
+        body.contains("app.invoke_blur()"),
+        "commit_typing takes the keyboard from the field"
+    );
+    assert!(
+        body.contains("update_timers_and_animations()"),
+        "commit_typing runs the fields' change handlers at once"
+    );
+
+    let close = embed.find("fn close(reason").expect("embed.rs has close");
+    let close = &embed[close..];
+    let typed = close
+        .find("super::commit_typing();")
+        .expect("host.close commits the typing");
+    let asked = close
+        .find("CloseRequested")
+        .expect("host.close asks the window to close");
+    assert!(
+        typed < asked,
+        "host.close commits the typing before the close saves"
+    );
+
+    let open = embed
+        .find("fn open_project(")
+        .expect("embed.rs has open_project");
+    let open = &embed[open..];
+    let typed = open
+        .find("invoke_from_event_loop(commit_typing)")
+        .expect("host.open_project commits the typing");
+    let switched = open
+        .find("switch_project(studio")
+        .expect("open_project switches");
+    assert!(
+        typed < switched,
+        "host.open_project commits the typing before the switch"
+    );
+
+    let lib = source("lib.rs");
+    let gone = lib
+        .find("fn embedded_host_gone()")
+        .expect("lib.rs has embedded_host_gone");
+    let gone = &lib[gone..];
+    let typed = gone
+        .find("embed::commit_typing();")
+        .expect("the host going commits the typing");
+    let closed = gone
+        .find("close_project()")
+        .expect("the host going closes the project");
+    assert!(
+        typed < closed,
+        "the host going commits the typing before the save"
+    );
+}

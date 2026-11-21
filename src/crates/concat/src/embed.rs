@@ -483,6 +483,38 @@ impl Drop for SaveHeld {
     }
 }
 
+/// Lands what is still being typed in a text field before the host takes
+/// the project away: before `host.close`, before `host.open_project`
+/// switches it, and before the editor leaves because the host's window
+/// went. Many fields commit only when they lose the focus or on Enter (a
+/// timeline tab's rename box, the inspector's number fields, the colour
+/// hex boxes); words typed there and still in the field when the host
+/// closed the editor were never written (the tab's new name was lost in
+/// the FL2 F6 reproduction). The keyboard goes to the window's own scope,
+/// the way a click beside the field does (`App::blur`), and Slint's change
+/// handlers run at once, so each field's "changed has-focus" commit has
+/// reached the studio before the close's save. On the event loop's thread,
+/// with the studio not borrowed (the fields' commits borrow it). Embedded
+/// only: upstream's own ways out are left as they are.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn commit_typing() {
+    if !active() {
+        return;
+    }
+    let mut found = None;
+    crate::host::Shell::with(|shell, app| {
+        if shell.studio.borrow().session.is_some() {
+            found = Some(app);
+        }
+    });
+    let Some(app) = found else {
+        return;
+    };
+    app.invoke_blur();
+    slint::platform::update_timers_and_animations();
+    log::debug!("embed: what was being typed is committed before the host's close or switch");
+}
+
 /// The project this run was started on, as the host spelled it.
 pub fn set_project(path: Option<&Path>) {
     told().given = path.map(|path| path.to_string_lossy().into_owned());
@@ -758,6 +790,10 @@ fn open_project(params: &serde_json::Value) -> Result<serde_json::Value, String>
     }
     let (answer, answered) = std::sync::mpsc::channel::<Result<(), String>>();
     let given = path.clone();
+    // Words still in a field land in the open project before it is saved
+    // and closed for the next one. The loop runs its errands in order, so
+    // this comes before the switch below.
+    let _ = slint::invoke_from_event_loop(commit_typing);
     crate::host::on_ui(move |studio, _, _| {
         let switched = switch_project(studio, &given);
         if switched.is_ok() {
@@ -1290,6 +1326,9 @@ mod imp {
     fn close(reason: &'static str) {
         let _ = slint::invoke_from_event_loop(move || {
             log::info!("embed: closing, {reason}");
+            // Words still in a field are committed first, then the close
+            // below saves them.
+            super::commit_typing();
             let mut found = None;
             crate::host::Shell::with(|_, app| found = Some(app));
             if let Some(app) = found {

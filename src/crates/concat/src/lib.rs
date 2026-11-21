@@ -3079,6 +3079,8 @@ const EXPORT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
 /// winit panics on a window handle that no longer exists.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn embedded_host_gone() -> ! {
+    // Words still in a text field land in the save below (embed.rs).
+    embed::commit_typing();
     Shell::with(|shell, _| {
         let mut studio = shell.studio.borrow_mut();
         if studio.session.is_some() {

@@ -267,6 +267,32 @@ The editor watches the host's window; when it is gone the project is saved and
 closed and the process leaves (a host should start the editor detached, so
 that its own crash does not take the editor down before it can save).
 
+### Words still being typed when the host closes or switches
+
+Many of upstream's text fields commit only when they lose the focus or on
+Enter: a timeline tab's rename box, the inspector's number fields, the colour
+hex boxes (the caption's Content box marks its words for the save from the
+first key, so it was already safe). A person closes a project by clicking
+somewhere else first, so the field always lost the focus before the save.
+The host does not: `host.close` (Clips Kitty quitting, or leaving the Editor
+page), `host.open_project` (switching to another clip) and the host's window
+going all saved the project while the field still had the keyboard, and what
+was typed in it was never written. FL2 F6's reproduction (Clips Kitty's
+desktop app, build 44855595570): "Timeline 1" renamed by typing, `host.close`
+at once, the project reopened as "Timeline 1".
+
+All three now call `embed::commit_typing` first, on the event loop and before
+the save: the keyboard goes to the window's own scope (`App::blur`, what a
+click beside the field does) and Slint's change handlers are run at once
+(`slint::platform::update_timers_and_animations`), so each field's own
+"changed has-focus" commit lands in the studio, and the close's save
+(`close_project`, which also lands a caption's pending words) writes it.
+Embedded only, and only with a project open. Files: `embed.rs`
+(`commit_typing`, `imp::close`, `open_project`), `lib.rs`
+(`embedded_host_gone`), and a source check in `field_focus_tests.rs`
+(`the_hosts_ways_out_commit_the_typing_first`). Not covered: text still
+being composed in a Windows input method (IME) and not yet confirmed.
+
 ## 7. "The first pause after launch is dropped" (stage 1's report)
 
 See the end of this file for what was found.
