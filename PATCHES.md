@@ -9,7 +9,7 @@ this one does. Concat's name is kept where it is a fact: the credit in
 Settings > About, the licence and notice files, this file, and the source.
 
 - Source of this build: https://github.com/ColinGPT9/clips-kitty-editor (branch `kitty/embed`)
-- Built from: https://github.com/jub0t/Concat (`main` at a7cda105, 26 commits after v0.2.11)
+- Built from: https://github.com/jub0t/Concat (release `v0.2.12`, 995b2054, merged in on 2026-11-20; see "Updating from Concat")
 - Licence: AGPL-3.0-or-later, unchanged. [LICENSE](LICENSE) and
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) ship with every build, with this file.
 
@@ -160,7 +160,7 @@ with small hooks in `launch.rs`, `main.rs`, `lib.rs`, `platform.rs`,
 `host.state` (every key always present; `project` is null on the empty screen):
 
 ```json
-{"hostApi": 2, "version": "0.2.11", "pid": 1234,
+{"hostApi": 2, "version": "0.2.12", "pid": 1234,
  "visible": true, "focused": false,
  "graphics": {"software": false, "adapter": "<name>", "backend": "Direct3D 12"},
  "project": {"path": "<dir>", "name": "My clip", "dirty": false},
@@ -280,6 +280,13 @@ shared DLLs, ONNX Runtime, whisper's CPU modules, the Visual C++ runtime,
 LICENSE, THIRD_PARTY_NOTICES.md, PATCHES.md). `scripts/ci/smoke-windows.ps1`
 tries whichever program name the bundle has.
 
+`.github/workflows/upstream-check.yml` (Mondays, and by hand): keeps the
+fork's `main` equal to Concat's `main` with GitHub's fork sync, and when
+Concat has a release tag that `kitty/embed` lacks, merges it into a new
+branch `update/concat-<tag>`; a clean merge is pushed, built and offered as
+the pull request "Update to Concat <tag>", a conflicted one is only listed in
+the run's summary. See "Updating from Concat" below.
+
 ## 9. Fixes that apply without `--embed` too
 
 Plain bug fixes, standalone as well as embedded; each could go upstream as it is.
@@ -313,6 +320,79 @@ drops a `WM_CHAR` that arrives after its key's key-up
 (`platform_impl/windows/keyboard.rs`, the "probably IME" branch), and a child
 window shares the host's input queue, which makes that order likely. A
 physical keyboard never sends `VK_PACKET`; the fix belongs in winit.
+
+## Updating from Concat
+
+How the fork takes Concat's fixes: merge the release tag into `kitty/embed`
+(a merge commit, never a rebase), resolve with this file as the map, build
+on Actions, and try it inside Clips Kitty (open a clip, type in a caption,
+split, delete, export). `upstream-check.yml` (section 8) does the merge
+weekly when it is clean.
+
+### First trial: v0.2.12 (2026-11-20)
+
+| | |
+|---|---|
+| Upstream taken | `v0.2.12` (995b2054, 2026-11-19): 78 commits after v0.2.11, of which 52 were new to this fork (it was cut from `main` at a7cda105, 26 commits after v0.2.11) |
+| Files both sides had changed | 25 (Rust, Slint, the CI files and scripts) |
+| Merged by Git on its own | 23 of them |
+| Conflicted | 2 files, 1 hunk each (below) |
+| Wall time, merge to a checked commit | about 4 minutes (21:18 to 21:22 EST): the merge, reading the two hunks and the upstream commits behind them, the two resolutions, a look at what else upstream changed in our files, `cargo fmt --check`, `cargo metadata` |
+| Wall time, with the build and the desktop check | see "Build" below |
+| Commits | 1a74a02a (the merge), e10847f4 (`cargo fmt` on three of our files that were already unformatted before the merge) |
+
+The two conflicts:
+
+1. `src/crates/concat/src/platform.rs`, `DropHandler`'s window events.
+   Upstream added safe start's two hooks (`window_drew` on a redraw,
+   `window_touched` on a press, wheel, touch or real key; commit 2cd6ed6d,
+   "a launch counts as started once its window has drawn or been used"), at
+   the same place as our embed hooks (focus logging, Ctrl+F6, the key-press
+   watch). Both kept, upstream's first: our Ctrl+F6 arm returns early, and a
+   press there still counts as the window being used. Embedded, safe start
+   has no mark (lib.rs skips it), so the hooks do nothing there.
+2. `src/crates/concat/src/studio/edit.rs`, `Studio::save`. Upstream moved
+   saves to a save lane of their own (`host::spawn_save`, commit 5b94f3d5,
+   "saves and the monitor's frames no longer wait behind long jobs"), where
+   a save still waiting is **replaced** by a newer one of the same project.
+   Ours counted a save from hand-over to write for `host.state`'s `dirty`
+   (`embed::save_began` / `save_ended` around the write). Kept upstream's
+   lane; the count now rides on the job as a guard (`embed::save_held`,
+   dropped after the write or with a replaced job), because a replaced job
+   never runs and would have left the project "dirty" for good.
+
+Merged without a conflict but read, because they touch what this file
+lists:
+
+- Safe start (lib.rs, new `start_watch.rs`): the 15-second mark became
+  "drew for 3 s or was used". Our `!embed::active()` guard around the mark
+  survived, so embedded starts still leave no mark and never start in
+  software.
+- New notice when no graphics driver is found (`start.noGraphicsDriver`,
+  commit acc6367b): a toast once at start; its "Concat" reads "Clips Kitty
+  Editor" through `i18n::t` like every other line. No change needed.
+- One new Rust message naming Concat (`record.rs`, "is not a recording
+  Concat wrote"): now says `brand::NAME`, as section 1 asks.
+- `concat-render/src/memory.rs` logs "Concat uses N MB" per GPU heap: a log
+  line only, left as upstream's.
+- `ui/primitives/toast.slint`: not changed between a7cda105 and v0.2.12
+  (the notice changes that touch it were already in the fork point).
+- CI: ONNX Runtime now comes from Microsoft's NuGet package
+  (`scripts/ci/onnxruntime.sh`, commit 4e006643); `build-windows.yml`
+  already calls that script. Upstream's per-crate codegen units for the
+  window crate (995b2054) sit beside our `CARGO_PROFILE_RELEASE_*` settings.
+- The beat detection model (`beats` feature) is carried inside the
+  program, so the bundle needs no new file.
+
+What upstream changed that matters to Clips Kitty: GPU memory (each device
+reports its memory, a frame whose GPU memory ran out is skipped instead of
+crashing: cf9e4eee, 44621e7a), exports on a computer with no usable
+graphics driver (the software adapter: drawing takes turns, frames drawn
+on the CPU, a failing export finishes on the CPU: d860099d, 1bb3c376,
+9bcef93d, 0f2cb5a0, 095f3853), saves no longer wait behind long jobs
+(5b94f3d5), a clip whose sound outlasts its picture holds its last frame at
+the join (96984be8), keyable width and height (1921b95c), and beats under
+Audio > Sound (off until switched on).
 
 ## Findings on "the first pause after launch is dropped"
 

@@ -1,0 +1,195 @@
+# Clips Kitty Editor: the weekly look at Concat (upstream), and by hand.
+#
+# 1. Keeps this fork's `main` equal to Concat's `main` with GitHub's own
+#    fork sync (POST /repos/{owner}/{repo}/merge-upstream).
+# 2. When Concat has a release tag (vX.Y.Z, no -rc) that `kitty/embed` does
+#    not hold yet, merges it into a new branch `update/concat-<tag>` made
+#    from `kitty/embed`:
+#    - a clean merge is pushed, the Windows test build is started for that
+#      branch, and a pull request "Update to Concat <tag>" into
+#      `kitty/embed` is opened;
+#    - a merge with conflicts pushes nothing and lists the conflicted files
+#      in this run's summary (the run fails, so it is seen; no issue, no
+#      comment).
+#    A tag whose branch is already on the fork was proposed before and is
+#    left to that branch.
+#
+# GitHub runs a `schedule` only from the copy of this file on the default
+# branch (`main`); the copy on `kitty/embed` is the one PATCHES.md describes
+# and the one started by hand there.
+#
+# Tokens: the job's GITHUB_TOKEN by default. GitHub never lets that token
+# create or change files under .github/workflows, so a sync or an update
+# whose upstream commits touch a workflow is refused with it; a repository
+# secret KITTY_SYNC_TOKEN (a token of the owner's with contents, pull
+# requests, actions and workflows write on this repository), when set, is
+# used instead. The summary says which refusal it met.
+name: Upstream check
+
+on:
+  schedule:
+    - cron: "23 6 * * 1" # Mondays, 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: upstream-check
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: jub0t/Concat
+  WORK_BRANCH: kitty/embed
+  BUILD_WORKFLOW: build-windows.yml
+
+jobs:
+  check:
+    name: Concat's main and releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.KITTY_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+      TOKEN_KIND: ${{ secrets.KITTY_SYNC_TOKEN != '' && 'KITTY_SYNC_TOKEN' || 'GITHUB_TOKEN' }}
+    steps:
+      - name: Keep main equal to Concat's main
+        shell: bash
+        run: |
+          set -uo pipefail
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          answer=$(curl -sS -o sync.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/merge-upstream" -d '{"branch":"main"}')
+          message=$(jq -r '.message // ""' sync.json 2>/dev/null)
+          kind=$(jq -r '.merge_type // ""' sync.json 2>/dev/null)
+          {
+            echo "## Concat's main"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$answer" = "200" ]; then
+            case "$kind" in
+              none) line="main was already equal to Concat's main." ;;
+              fast-forward) line="main was brought up to Concat's main (fast-forward)." ;;
+              merge) line="main was brought up to Concat's main (a merge commit: main holds commits of its own)." ;;
+              *) line="main synced: $message" ;;
+            esac
+            echo "$line" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::The fork sync answered $answer: $message"
+            {
+              echo "**The fork sync was refused** (HTTP $answer, with $TOKEN_KIND): $message"
+              echo
+              echo "A refusal that names workflows means Concat's new commits change a file under"
+              echo ".github/workflows, which GITHUB_TOKEN may never write; set KITTY_SYNC_TOKEN"
+              echo "or press Sync fork on the repository's page."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "SYNC_FAILED=1" >> "$GITHUB_ENV"
+          fi
+          echo >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.WORK_BRANCH }}
+          fetch-depth: 0
+          token: ${{ env.GH_TOKEN }}
+
+      - name: Merge Concat's newest release into a branch, if kitty/embed lacks it
+        shell: bash
+        run: |
+          set -uo pipefail
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          say() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          echo "## Concat's releases" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+
+          # Concat's tags, kept apart from this repository's own.
+          git fetch --quiet --no-tags "https://github.com/$UPSTREAM_REPO.git" \
+            '+refs/tags/*:refs/upstream-tags/*'
+          tag=$(git for-each-ref --format='%(refname:strip=2)' refs/upstream-tags \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          if [ -z "$tag" ]; then
+            say "No release tag was found at $UPSTREAM_REPO; nothing to do."
+            exit 0
+          fi
+          commit=$(git rev-parse "refs/upstream-tags/$tag^{commit}")
+          if git merge-base --is-ancestor "$commit" HEAD; then
+            say "Concat's newest release is $tag, and $WORK_BRANCH already holds it. Nothing to do."
+            [ "${SYNC_FAILED:-0}" = "1" ] && exit 1
+            exit 0
+          fi
+
+          branch="update/concat-$tag"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            say "Concat's newest release is $tag; it is not in $WORK_BRANCH yet, and \`$branch\` was made for it already. Nothing new to do."
+            [ "${SYNC_FAILED:-0}" = "1" ] && exit 1
+            exit 0
+          fi
+
+          git switch --quiet -c "$branch"
+          if ! git -c user.name="github-actions[bot]" \
+                   -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                   merge --no-ff --no-edit -m "Merge Concat $tag into $WORK_BRANCH" "$commit" > merge.log 2>&1; then
+            conflicted=$(git diff --name-only --diff-filter=U)
+            git merge --abort || true
+            {
+              echo "Concat's newest release is **$tag**. Merging it into $WORK_BRANCH **conflicts**; nothing was pushed."
+              echo
+              echo "Conflicted files:"
+              echo
+              if [ -n "$conflicted" ]; then
+                echo "$conflicted" | sed 's/^/- `/; s/$/`/'
+              else
+                echo '```'
+                tail -n 20 merge.log
+                echo '```'
+              fi
+              echo
+              echo "Merge it by hand with PATCHES.md as the map (its section \"Updating from Concat\")."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Concat $tag conflicts with $WORK_BRANCH; see the summary"
+            exit 1
+          fi
+
+          if ! git push --quiet origin "$branch" 2> push.log; then
+            {
+              echo "Concat's newest release is **$tag**. It merges cleanly, but **the push of \`$branch\` was refused** (with $TOKEN_KIND):"
+              echo
+              echo '```'
+              cat push.log
+              echo '```'
+              echo
+              echo "A refusal that names workflows means $tag changes a file under .github/workflows, which GITHUB_TOKEN may never write; set KITTY_SYNC_TOKEN, or merge it by hand."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::The push of $branch was refused; see the summary"
+            exit 1
+          fi
+          say "Concat's newest release is **$tag**: merged cleanly into \`$branch\` and pushed."
+
+          dispatched=$(curl -sS -o dispatch.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$api/actions/workflows/$BUILD_WORKFLOW/dispatches" \
+            -d "$(jq -n --arg ref "$branch" '{ref: $ref}')")
+          if [ "$dispatched" = "204" ]; then
+            say "- The Windows test build ($BUILD_WORKFLOW) was started for \`$branch\`."
+          else
+            say "- The Windows test build could not be started (HTTP $dispatched): $(jq -r '.message // ""' dispatch.json)"
+          fi
+
+          body="Concat $tag merged into $WORK_BRANCH by the upstream check, with no conflicts. Before merging: the Windows test build of this branch, PATCHES.md's list still true, and the Clips Kitty desktop smoke test (open a clip, type in a caption, export)."
+          opened=$(curl -sS -o pull.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$api/pulls" \
+            -d "$(jq -n --arg title "Update to Concat $tag" --arg head "$branch" \
+                       --arg base "$WORK_BRANCH" --arg body "$body" \
+                       '{title: $title, head: $head, base: $base, body: $body}')")
+          if [ "$opened" = "201" ]; then
+            say "- Pull request: $(jq -r '.html_url' pull.json)"
+          else
+            say "- The pull request could not be opened (HTTP $opened): $(jq -r '.message // ""' pull.json). Open it from $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$WORK_BRANCH...$branch"
+            exit 1
+          fi
+          [ "${SYNC_FAILED:-0}" = "1" ] && exit 1
+          exit 0
