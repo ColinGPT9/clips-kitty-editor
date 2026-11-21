@@ -16,7 +16,10 @@
 #
 # GitHub runs a `schedule` only from the copy of this file on the default
 # branch (`main`); the copy on `kitty/embed` is the one PATCHES.md describes
-# and the one started by hand there.
+# and the one started by hand there. The weekly run needs this file on
+# `main` as well (one commit of our own there; the fork sync then merges
+# rather than fast-forwards, which it does on its own when nothing
+# conflicts).
 #
 # Tokens: the job's GITHUB_TOKEN by default. GitHub never lets that token
 # create or change files under .github/workflows, so a sync or an update
@@ -30,6 +33,12 @@ on:
   schedule:
     - cron: "23 6 * * 1" # Mondays, 06:23 UTC
   workflow_dispatch:
+  # A change to this file on kitty/embed runs it once. GitHub knows a
+  # workflow that lives only on a branch other than the default one (and so
+  # can start it by hand there) only after it has run there once.
+  push:
+    branches: ["kitty/embed"]
+    paths: [".github/workflows/upstream-check.yml"]
 
 permissions:
   contents: write
