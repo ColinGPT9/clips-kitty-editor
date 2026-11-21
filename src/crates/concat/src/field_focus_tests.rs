@@ -96,11 +96,15 @@ fn padded_fields_take_a_press_in_their_padding() {
     }
 }
 
+/// A Rust file of this crate, with Windows line ends made plain: the
+/// Windows build checks the source out with CRLF.
 fn source(relative: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("reading src/{relative}: {error}"))
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("reading src/{relative}: {error}"))
+        .replace("\r\n", "\n")
 }
 
 /// What is still being typed in a field that commits on its way out (a
