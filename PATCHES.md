@@ -338,7 +338,9 @@ weekly when it is clean.
 | Merged by Git on its own | 23 of them |
 | Conflicted | 2 files, 1 hunk each (below) |
 | Wall time, merge to a checked commit | about 4 minutes (21:18 to 21:22 EST): the merge, reading the two hunks and the upstream commits behind them, the two resolutions, a look at what else upstream changed in our files, `cargo fmt --check`, `cargo metadata` |
-| Wall time, with the build and the desktop check | see "Build" below |
+| Wall time, with the build and the desktop check | about 1 hour (21:18 to 22:19 EST), of which 41.5 minutes were the build on Actions |
+| Build attempts | 1: run 44855595570 at 1fa05725, success (CI tests: concat-server 28, launch 6 and the others passed; the Windows smoke run passed, its export included, which failed on the runner before v0.2.12) |
+| Tried | standalone (title, icon, file properties, Settings > About, data folder `com.clipskitty.editor`, Concat's folder untouched) and inside the Clips Kitty desktop app (open a clip, type in a caption, split, delete, export back to the clip, `host.close` saves, no `automation.json`): all as before |
 | Commits | 1a74a02a (the merge), e10847f4 (`cargo fmt` on three of our files that were already unformatted before the merge) |
 
 The two conflicts:
