@@ -866,8 +866,16 @@ mod tests {
 
         pane.phase = ExportPhase::Done;
         pane.written_bytes = size_on_disk(&dir.join("gone.mp4").to_string_lossy());
-        assert_eq!(pane.done_size(), "", "a file that is not there has no size to say");
-        assert_eq!(size_on_disk(&dir.to_string_lossy()), None, "a folder is no file");
+        assert_eq!(
+            pane.done_size(),
+            "",
+            "a file that is not there has no size to say"
+        );
+        assert_eq!(
+            size_on_disk(&dir.to_string_lossy()),
+            None,
+            "a folder is no file"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

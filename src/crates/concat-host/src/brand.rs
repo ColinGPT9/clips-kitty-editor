@@ -105,7 +105,10 @@ mod tests {
             assert_eq!(line_for(key), Some(*line));
             assert!(!line.contains(BASED_ON) && !line.contains(NAME), "{key}");
         }
-        assert_eq!(line_for("settings.concatsMirror"), Some("Project mirror (GitHub)"));
+        assert_eq!(
+            line_for("settings.concatsMirror"),
+            Some("Project mirror (GitHub)")
+        );
         assert_eq!(line_for("settings.restartTitle"), None);
     }
 

@@ -43,7 +43,10 @@ fn the_resize_box_hands_a_press_to_its_words() {
         .find("clicked => { root.focus-field(); }")
         .expect("a TouchArea that asks for the field's focus");
     let flick = source.find("flick := Flickable").unwrap();
-    assert!(touch < flick, "the TouchArea is under the words, not over them");
+    assert!(
+        touch < flick,
+        "the TouchArea is under the words, not over them"
+    );
 }
 
 /// Every box of typed words answers that press with its own field.
@@ -70,7 +73,10 @@ fn every_resize_box_focuses_its_field() {
             rest = &body[1..];
         }
     }
-    assert!(boxes >= 4, "found {boxes} ResizeBox uses; the caption, script and prompt boxes at least");
+    assert!(
+        boxes >= 4,
+        "found {boxes} ResizeBox uses; the caption, script and prompt boxes at least"
+    );
 }
 
 /// The other fields drawn with padding round their words: the colour's
@@ -79,7 +85,10 @@ fn every_resize_box_focuses_its_field() {
 #[test]
 fn padded_fields_take_a_press_in_their_padding() {
     for (file, call) in [
-        ("primitives/color-picker.slint", "clicked => { hex.focus(); }"),
+        (
+            "primitives/color-picker.slint",
+            "clicked => { hex.focus(); }",
+        ),
         ("timeline/tabs.slint", "clicked => { rename.focus(); }"),
         ("inspector/controls.slint", "clicked => { input.focus(); }"),
     ] {
