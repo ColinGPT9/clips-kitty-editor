@@ -326,6 +326,10 @@ impl Studio {
             consider(clip.start as f32);
             consider((clip.start + clip.duration) as f32);
         }
+        // The song's beats, so a cut lands on the beat.
+        for beat in self.timeline_beats() {
+            consider(beat as f32);
+        }
         best
     }
 
@@ -528,8 +532,14 @@ impl Studio {
         );
     }
 
-    /// Writes the document, on a worker. `announce` says so on success;
-    /// a failure is always said.
+    /// Writes the document, on the save lane. `announce` says so on
+    /// success; a failure is always said.
+    ///
+    /// The snapshot is taken here, on the window's thread, with the edit
+    /// that asked for it already applied; the lane only writes it. It has
+    /// a thread of its own, so a save never waits behind an export or an
+    /// analysis, and a save still waiting when the next is asked for is
+    /// replaced by it - see `host::spawn_save`.
     pub fn save(&mut self, announce: bool) {
         let Some(session) = self.session.as_mut() else {
             return;
@@ -544,14 +554,19 @@ impl Studio {
         let began = std::time::Instant::now();
         // An embedding host is told the project has unsaved changes until
         // this write is back, not only until it is handed over (embed.rs).
-        crate::embed::save_began();
-        crate::host::spawn_in_project_publishing(
+        // The mark is held by the job itself, so a save that a newer one
+        // replaced on the save lane before it ran lets go of it as it is
+        // dropped.
+        let held = crate::embed::save_held();
+        crate::host::spawn_save(
+            path.clone(),
+            announce,
             move || {
                 let written = projects::save_ordered(&path, &document, ticket);
-                crate::embed::save_ended();
+                drop(held);
                 written
             },
-            move |studio, _, _, result| match result {
+            move |studio, _, _, result, announce| match result {
                 Ok(_) if announce => {
                     log::info!(
                         "project: saved {name} in {}",

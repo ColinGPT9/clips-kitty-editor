@@ -466,6 +466,23 @@ pub fn save_ended() {
     });
 }
 
+/// A save on its way to the disk, counted in [`SAVES`] from [`save_held`]
+/// until it is dropped: after the write, or with its job when a newer save
+/// of the same project replaced it on the save lane before it ran.
+pub struct SaveHeld(());
+
+/// A save was handed to the save lane (studio/edit.rs).
+pub fn save_held() -> SaveHeld {
+    save_began();
+    SaveHeld(())
+}
+
+impl Drop for SaveHeld {
+    fn drop(&mut self) {
+        save_ended();
+    }
+}
+
 /// The project this run was started on, as the host spelled it.
 pub fn set_project(path: Option<&Path>) {
     told().given = path.map(|path| path.to_string_lossy().into_owned());
