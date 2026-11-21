@@ -293,6 +293,28 @@ Embedded only, and only with a project open. Files: `embed.rs`
 (`the_hosts_ways_out_commit_the_typing_first`). Not covered: text still
 being composed in a Windows input method (IME) and not yet confirmed.
 
+### The host's own default shortcuts
+
+Clips Kitty puts every bare-letter shortcut on a Ctrl chord (Mute on
+Ctrl+M, Freeze on Ctrl+F, ...) by writing them into the settings file before
+it starts the editor. Written only as `keybinds` (the person's own
+rebinds), a row's Reset in Settings > Shortcuts, and Reset all, put the
+action back on upstream's bare letter, and that letter then cut the
+timeline again (FL2 X1: Mute reset to M; M alone muted the selected clip).
+
+The settings file now has a second map, `hostKeybinds` (action id to one
+chord, "" for none; `Preferences::host_keybinds`), which the host writes and
+the editor never does. `keymap.rs` reads an action's defaults through
+`defaults_of`: the host's chord where it gave one, else the shipped list. So
+what an action answers to, the chord its menus and tooltips name, what Reset
+and Reset all put back, and whether a capture is "back to the default" all
+follow the host's table. With no `hostKeybinds` (standalone, or a host that
+writes none) nothing changes. Not embed-only in code: it is driven only by
+that key, which only Clips Kitty writes. Files: `prefs.rs`, `keymap.rs`
+(`defaults_of`, `bound`, `answers`, `bind`, `reset`; test
+`the_hosts_defaults_are_what_reset_puts_back`), and the `keymap::` tests
+in the Windows build.
+
 ## 7. "The first pause after launch is dropped" (stage 1's report)
 
 See the end of this file for what was found.

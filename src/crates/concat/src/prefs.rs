@@ -212,6 +212,14 @@ pub struct Preferences {
     /// by Settings › Shortcuts; resolved in [`crate::keymap`].
     #[serde(default)]
     pub keybinds: BTreeMap<String, String>,
+    /// Clips Kitty: the host's own defaults, by action id, in the shape of
+    /// `keybinds` ("" for none); absent is the shipped chord. Clips Kitty
+    /// writes it before it starts the editor, so that inside its window
+    /// every bare-letter key sits on Ctrl, and a row's Reset (and Reset
+    /// all) go back to these chords, not to the bare letters. The editor
+    /// never writes it; resolved in [`crate::keymap`].
+    #[serde(default)]
+    pub host_keybinds: BTreeMap<String, String>,
     /// What this run knows of the file; see [`OnDisk`].
     #[serde(skip)]
     disk: OnDisk,

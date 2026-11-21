@@ -231,6 +231,19 @@ pub fn name(id: &str) -> String {
     }
 }
 
+/// The chords `action` answers to while nothing was rebound: the host's
+/// default where Clips Kitty gave one ([`Preferences::host_keybinds`],
+/// one chord, or none for ""), else the list it ships on. Clips Kitty
+/// patch (FL2 X1): Reset and Reset all go back to these, so inside its
+/// window a reset never puts an action back on a bare letter.
+fn defaults_of<'a>(prefs: &'a Preferences, action: &Action) -> Vec<&'a str> {
+    match prefs.host_keybinds.get(action.id) {
+        Some(host) if host.is_empty() => Vec::new(),
+        Some(host) => vec![host.as_str()],
+        None => action.defaults.to_vec(),
+    }
+}
+
 /// The chord `id` is on now: what was bound over the default, the
 /// default when nothing was, and `None` when a rebind took the action's
 /// key away and left it holding none.
@@ -239,7 +252,7 @@ pub fn bound<'a>(prefs: &'a Preferences, id: &str) -> Option<&'a str> {
     match prefs.keybinds.get(id) {
         Some(custom) if custom.is_empty() => None,
         Some(custom) => Some(custom.as_str()),
-        None => action.defaults.first().copied(),
+        None => defaults_of(prefs, action).first().copied(),
     }
 }
 
@@ -254,7 +267,7 @@ pub fn label(prefs: &Preferences, id: &str) -> String {
 fn answers(prefs: &Preferences, action: &Action, chord: &str) -> bool {
     match prefs.keybinds.get(action.id) {
         Some(custom) => !custom.is_empty() && custom == chord,
-        None => action.defaults.contains(&chord),
+        None => defaults_of(prefs, action).contains(&chord),
     }
 }
 
@@ -293,6 +306,7 @@ pub fn resolve(prefs: &Preferences, chord: &str) -> Option<&'static str> {
 /// chord, if any.
 pub fn bind(prefs: &mut Preferences, id: &str, chord: &str) -> Option<&'static str> {
     let action = action(id)?;
+    let is_default = defaults_of(prefs, action).contains(&chord);
     let mut lost = None;
     for other in ACTIONS {
         if other.id != id && answers(prefs, other, chord) {
@@ -300,7 +314,7 @@ pub fn bind(prefs: &mut Preferences, id: &str, chord: &str) -> Option<&'static s
             lost = Some(other.id);
         }
     }
-    if action.defaults.contains(&chord) {
+    if is_default {
         prefs.keybinds.remove(id);
     } else {
         prefs.keybinds.insert(id.to_owned(), chord.to_owned());
@@ -313,10 +327,10 @@ pub fn bind(prefs: &mut Preferences, id: &str, chord: &str) -> Option<&'static s
 pub fn reset(prefs: &mut Preferences, id: &str) -> Option<&'static str> {
     let action = action(id)?;
     prefs.keybinds.remove(id);
-    let default = action.defaults.first()?;
+    let default = defaults_of(prefs, action).first()?.to_string();
     let mut lost = None;
     for other in ACTIONS {
-        if other.id != id && answers(prefs, other, default) {
+        if other.id != id && answers(prefs, other, &default) {
             prefs.keybinds.insert(other.id.to_owned(), String::new());
             lost = Some(other.id);
         }
@@ -737,6 +751,52 @@ mod tests {
         assert_eq!(bound(&prefs, "mute"), Some("m"));
         reset_all(&mut prefs);
         assert!(prefs.keybinds.is_empty());
+    }
+
+    /// Clips Kitty patch (FL2 X1): the host's defaults are what an action
+    /// answers to and what Reset and Reset all put back, so inside Clips
+    /// Kitty a reset never leaves an action on a bare letter.
+    #[test]
+    fn the_hosts_defaults_are_what_reset_puts_back() {
+        let mut prefs = Preferences::default();
+        prefs.host_keybinds.insert("mute".into(), "ctrl+m".into());
+        prefs.host_keybinds.insert("delete".into(), "delete".into());
+        prefs.host_keybinds.insert("pan".into(), String::new());
+        // The host's chords, and the bare letter and Backspace do nothing.
+        assert_eq!(bound(&prefs, "mute"), Some("ctrl+m"));
+        assert_eq!(resolve(&prefs, "ctrl+m"), Some("mute"));
+        assert_eq!(resolve(&prefs, "m"), None);
+        assert_eq!(resolve(&prefs, "delete"), Some("delete"));
+        assert_eq!(resolve(&prefs, "backspace"), None);
+        assert_eq!(bound(&prefs, "pan"), None);
+        assert_eq!(resolve(&prefs, "h"), None);
+        // An action the host left alone ships as it does.
+        assert_eq!(bound(&prefs, "freeze"), Some("f"));
+        // Moved, then Reset: back on the host's chord, not on M.
+        assert_eq!(bind(&mut prefs, "mute", "ctrl+shift+m"), None);
+        assert_eq!(bound(&prefs, "mute"), Some("ctrl+shift+m"));
+        assert_eq!(reset(&mut prefs, "mute"), None);
+        assert_eq!(bound(&prefs, "mute"), Some("ctrl+m"));
+        assert!(!prefs.keybinds.contains_key("mute"));
+        assert_eq!(resolve(&prefs, "m"), None);
+        // Binding the host's chord again is no override.
+        assert_eq!(bind(&mut prefs, "mute", "ctrl+shift+m"), None);
+        assert_eq!(bind(&mut prefs, "mute", "ctrl+m"), None);
+        assert!(!prefs.keybinds.contains_key("mute"));
+        // Reset takes the host's chord back from whoever holds it.
+        assert_eq!(bind(&mut prefs, "snap", "ctrl+m"), Some("mute"));
+        assert_eq!(reset(&mut prefs, "mute"), Some("snap"));
+        assert_eq!(bound(&prefs, "mute"), Some("ctrl+m"));
+        // Reset all: the host's table, not the bare letters.
+        prefs.keybinds.insert("mute".into(), "m".into());
+        reset_all(&mut prefs);
+        assert_eq!(bound(&prefs, "mute"), Some("ctrl+m"));
+        assert_eq!(resolve(&prefs, "m"), None);
+        // The host's table survives the settings file.
+        let text = serde_json::to_string(&prefs).unwrap();
+        assert!(text.contains("\"hostKeybinds\""), "{text}");
+        let back: Preferences = serde_json::from_str(&text).unwrap();
+        assert_eq!(bound(&back, "mute"), Some("ctrl+m"));
     }
 
     #[test]
